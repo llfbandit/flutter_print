@@ -1,0 +1,49 @@
+name: flutter_print
+description: "A Flutter plugin focusing on print, that's it."
+version: 0.1.0
+homepage: https://github.com/llfbandit/flutter_print
+
+topics: 
+  - print
+  - printing
+  - airprint
+  - pdf
+
+environment:
+  sdk: ^3.12.0
+  flutter: '>=3.44.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
+
+  meta: ^1.18.0
+  plugin_platform_interface: ^2.0.2
+  web: ^1.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+  pigeon: ^26.3.4
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.llfbandit.flutter_print
+        pluginClass: FlutterPrintPlugin
+      ios:
+        pluginClass: FlutterPrintPlugin
+      linux:
+        pluginClass: FlutterPrintPlugin
+      macos:
+        pluginClass: FlutterPrintPlugin
+      windows:
+        pluginClass: FlutterPrintPluginCApi
+      web:
+        pluginClass: FlutterPrintWeb
+        fileName: src/web/flutter_print_web.dart
