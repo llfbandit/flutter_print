@@ -338,7 +338,8 @@ class PrinterInfo {
     const std::string* address,
     const std::string* description,
     bool is_default,
-    const PrinterCapabilities& capabilities);
+    const PrinterCapabilities& capabilities,
+    const bool* is_available);
 
   ~PrinterInfo() = default;
   PrinterInfo(const PrinterInfo& other);
@@ -378,6 +379,18 @@ class PrinterInfo {
   const PrinterCapabilities& capabilities() const;
   void set_capabilities(const PrinterCapabilities& value_arg);
 
+  // Whether the printer is currently online and accepting jobs.
+  //
+  // `true` — printer is idle or processing (online).
+  // `false` — printer is offline or stopped.
+  // `null` — availability cannot be determined on this platform
+  //   (Android and iOS).
+  //
+  // Platform support: macOS, Windows, Linux.
+  const bool* is_available() const;
+  void set_is_available(const bool* value_arg);
+  void set_is_available(bool value_arg);
+
   bool operator==(const PrinterInfo& other) const;
   bool operator!=(const PrinterInfo& other) const;
   /// Returns a hash code value for the object. This method is supported for the benefit of hash tables.
@@ -392,6 +405,7 @@ class PrinterInfo {
   std::optional<std::string> description_;
   bool is_default_;
   std::unique_ptr<PrinterCapabilities> capabilities_;
+  std::optional<bool> is_available_;
 };
 
 
@@ -414,26 +428,6 @@ class PigeonInternalCodecSerializer : public ::flutter::StandardCodecSerializer 
 
 // Native print API. All methods are implemented on the host side and invoked
 // from Dart through Pigeon-generated channels.
-//
-// Platform support matrix:
-//
-// | Method          | Android | iOS | macOS | Windows | Linux | Web |
-// |-----------------|:-------:|:---:|:-----:|:-------:|:-----:|:---:|
-// | [print]         |    ✓    |  ✓  |   ✓   |    ✓    |   ✓   |  ✗  |
-// | [printPreview]  |    ✓*   |  ✓* |   ✓   |    ✓†   |   ✓†  |  ✗  |
-// | [listPrinters]  |    ✗    |  ✗  |   ✓   |    ✓    |   ✓‡  |  ✗  |
-// | [pickPrinter]   |    ✗    |  ✓  |   ✗   |    ✗    |   ✗   |  ✗  |
-//
-// \* Android and iOS do not distinguish between a silent print and a preview:
-//   both methods open the system print dialog which includes a built-in
-//   preview step.
-//
-// † On Windows, [printPreview] shows the native Windows print dialog
-//   (`PrintDlgEx`). On Linux, [printPreview] opens the file with `xdg-open`.
-//
-// ‡ On Linux, printer enumeration requires the CUPS development libraries
-//   (`libcups-dev`) to be present at build time. When CUPS is unavailable
-//   an empty list is returned.
 //
 // Generated interface from Pigeon that represents a handler of messages from Flutter.
 class FlutterPrintApi {

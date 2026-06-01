@@ -29,6 +29,24 @@ extension FlutterPrintPlugin: FlutterPrintApi {
     // NSPrinter.printerNames can trigger network lookups for Bonjour printers,
     // so enumerate on a background queue to avoid stalling the platform thread.
     DispatchQueue.global(qos: .userInitiated).async {
+      // Build name → availability using PrintCore (already linked via PMSetDuplex).
+      var availabilityMap: [String: Bool] = [:]
+      var listRef: Unmanaged<CFArray>?
+      if PMServerCreatePrinterList(nil, &listRef) == noErr,
+         let cfArray = listRef?.takeRetainedValue() {
+        for i in 0..<CFArrayGetCount(cfArray) {
+          guard let rawPtr = CFArrayGetValueAtIndex(cfArray, i) else { continue }
+          let pmPrinter = unsafeBitCast(rawPtr, to: PMPrinter.self)
+          var nameRef: Unmanaged<CFString>?
+          guard PMPrinterGetName(pmPrinter, &nameRef) == noErr,
+                let name = nameRef?.takeUnretainedValue() as String? else { continue }
+          var state: PMPrinterState = 0
+          PMPrinterGetState(pmPrinter, &state)
+          availabilityMap[name] = (state == PMPrinterState(kPMPrinterIdle)
+                                || state == PMPrinterState(kPMPrinterProcessing))
+        }
+      }
+
       let defaultName = NSPrintInfo.shared.printer.name
       let printers = NSPrinter.printerNames.map { name in
         PrinterInfo(
@@ -40,7 +58,8 @@ extension FlutterPrintPlugin: FlutterPrintApi {
             supportsDuplex: nil,
             maxCopies: nil,
             supportedPageSizes: []
-          )
+          ),
+          isAvailable: availabilityMap[name]
         )
       }
       completion(.success(printers))

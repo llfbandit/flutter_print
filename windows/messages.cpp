@@ -717,19 +717,22 @@ PrinterInfo::PrinterInfo(
   const std::string* address,
   const std::string* description,
   bool is_default,
-  const PrinterCapabilities& capabilities)
+  const PrinterCapabilities& capabilities,
+  const bool* is_available)
  : label_(label),
     address_(address ? std::optional<std::string>(*address) : std::nullopt),
     description_(description ? std::optional<std::string>(*description) : std::nullopt),
     is_default_(is_default),
-    capabilities_(std::make_unique<PrinterCapabilities>(capabilities)) {}
+    capabilities_(std::make_unique<PrinterCapabilities>(capabilities)),
+    is_available_(is_available ? std::optional<bool>(*is_available) : std::nullopt) {}
 
 PrinterInfo::PrinterInfo(const PrinterInfo& other)
  : label_(other.label_),
     address_(other.address_ ? std::optional<std::string>(*other.address_) : std::nullopt),
     description_(other.description_ ? std::optional<std::string>(*other.description_) : std::nullopt),
     is_default_(other.is_default_),
-    capabilities_(std::make_unique<PrinterCapabilities>(*other.capabilities_)) {}
+    capabilities_(std::make_unique<PrinterCapabilities>(*other.capabilities_)),
+    is_available_(other.is_available_ ? std::optional<bool>(*other.is_available_) : std::nullopt) {}
 
 PrinterInfo& PrinterInfo::operator=(const PrinterInfo& other) {
   label_ = other.label_;
@@ -737,6 +740,7 @@ PrinterInfo& PrinterInfo::operator=(const PrinterInfo& other) {
   description_ = other.description_;
   is_default_ = other.is_default_;
   capabilities_ = std::make_unique<PrinterCapabilities>(*other.capabilities_);
+  is_available_ = other.is_available_;
   return *this;
 }
 
@@ -793,14 +797,28 @@ void PrinterInfo::set_capabilities(const PrinterCapabilities& value_arg) {
 }
 
 
+const bool* PrinterInfo::is_available() const {
+  return is_available_ ? &(*is_available_) : nullptr;
+}
+
+void PrinterInfo::set_is_available(const bool* value_arg) {
+  is_available_ = value_arg ? std::optional<bool>(*value_arg) : std::nullopt;
+}
+
+void PrinterInfo::set_is_available(bool value_arg) {
+  is_available_ = value_arg;
+}
+
+
 EncodableList PrinterInfo::ToEncodableList() const {
   EncodableList list;
-  list.reserve(5);
+  list.reserve(6);
   list.push_back(EncodableValue(label_));
   list.push_back(address_ ? EncodableValue(*address_) : EncodableValue());
   list.push_back(description_ ? EncodableValue(*description_) : EncodableValue());
   list.push_back(EncodableValue(is_default_));
   list.push_back(CustomEncodableValue(*capabilities_));
+  list.push_back(is_available_ ? EncodableValue(*is_available_) : EncodableValue());
   return list;
 }
 
@@ -817,11 +835,15 @@ PrinterInfo PrinterInfo::FromEncodableList(const EncodableList& list) {
   if (!encodable_description.IsNull()) {
     decoded.set_description(std::get<std::string>(encodable_description));
   }
+  auto& encodable_is_available = list[5];
+  if (!encodable_is_available.IsNull()) {
+    decoded.set_is_available(std::get<bool>(encodable_is_available));
+  }
   return decoded;
 }
 
 bool PrinterInfo::operator==(const PrinterInfo& other) const {
-  return PigeonInternalDeepEquals(label_, other.label_) && PigeonInternalDeepEquals(address_, other.address_) && PigeonInternalDeepEquals(description_, other.description_) && PigeonInternalDeepEquals(is_default_, other.is_default_) && PigeonInternalDeepEquals(capabilities_, other.capabilities_);
+  return PigeonInternalDeepEquals(label_, other.label_) && PigeonInternalDeepEquals(address_, other.address_) && PigeonInternalDeepEquals(description_, other.description_) && PigeonInternalDeepEquals(is_default_, other.is_default_) && PigeonInternalDeepEquals(capabilities_, other.capabilities_) && PigeonInternalDeepEquals(is_available_, other.is_available_);
 }
 
 bool PrinterInfo::operator!=(const PrinterInfo& other) const {
@@ -835,6 +857,7 @@ size_t PrinterInfo::Hash() const {
   result = result * 31 + PigeonInternalDeepHash(description_);
   result = result * 31 + PigeonInternalDeepHash(is_default_);
   result = result * 31 + PigeonInternalDeepHash(capabilities_);
+  result = result * 31 + PigeonInternalDeepHash(is_available_);
   return result;
 }
 

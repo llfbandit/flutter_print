@@ -757,6 +757,7 @@ struct _FlutterPrintPrinterInfo {
   gchar* description;
   gboolean is_default;
   FlutterPrintPrinterCapabilities* capabilities;
+  gboolean* is_available;
 };
 
 G_DEFINE_TYPE(FlutterPrintPrinterInfo, flutter_print_printer_info, G_TYPE_OBJECT)
@@ -767,6 +768,7 @@ static void flutter_print_printer_info_dispose(GObject* object) {
   g_clear_pointer(&self->address, g_free);
   g_clear_pointer(&self->description, g_free);
   g_clear_object(&self->capabilities);
+  g_clear_pointer(&self->is_available, g_free);
   G_OBJECT_CLASS(flutter_print_printer_info_parent_class)->dispose(object);
 }
 
@@ -777,7 +779,7 @@ static void flutter_print_printer_info_class_init(FlutterPrintPrinterInfoClass* 
   G_OBJECT_CLASS(klass)->dispose = flutter_print_printer_info_dispose;
 }
 
-FlutterPrintPrinterInfo* flutter_print_printer_info_new(const gchar* label, const gchar* address, const gchar* description, gboolean is_default, FlutterPrintPrinterCapabilities* capabilities) {
+FlutterPrintPrinterInfo* flutter_print_printer_info_new(const gchar* label, const gchar* address, const gchar* description, gboolean is_default, FlutterPrintPrinterCapabilities* capabilities, gboolean* is_available) {
   FlutterPrintPrinterInfo* self = FLUTTER_PRINT_PRINTER_INFO(g_object_new(flutter_print_printer_info_get_type(), nullptr));
   self->label = g_strdup(label);
   if (address != nullptr) {
@@ -794,6 +796,13 @@ FlutterPrintPrinterInfo* flutter_print_printer_info_new(const gchar* label, cons
   }
   self->is_default = is_default;
   self->capabilities = FLUTTER_PRINT_PRINTER_CAPABILITIES(g_object_ref(capabilities));
+  if (is_available != nullptr) {
+    self->is_available = static_cast<gboolean*>(malloc(sizeof(gboolean)));
+    *self->is_available = *is_available;
+  }
+  else {
+    self->is_available = nullptr;
+  }
   return self;
 }
 
@@ -822,6 +831,11 @@ FlutterPrintPrinterCapabilities* flutter_print_printer_info_get_capabilities(Flu
   return self->capabilities;
 }
 
+gboolean* flutter_print_printer_info_get_is_available(FlutterPrintPrinterInfo* self) {
+  g_return_val_if_fail(FLUTTER_PRINT_IS_PRINTER_INFO(self), nullptr);
+  return self->is_available;
+}
+
 static FlValue* flutter_print_printer_info_to_list(FlutterPrintPrinterInfo* self) {
   FlValue* values = fl_value_new_list();
   fl_value_append_take(values, fl_value_new_string(self->label));
@@ -829,6 +843,7 @@ static FlValue* flutter_print_printer_info_to_list(FlutterPrintPrinterInfo* self
   fl_value_append_take(values, self->description != nullptr ? fl_value_new_string(self->description) : fl_value_new_null());
   fl_value_append_take(values, fl_value_new_bool(self->is_default));
   fl_value_append_take(values, fl_value_new_custom_object(flutter_print_printer_capabilities_type_id, G_OBJECT(self->capabilities)));
+  fl_value_append_take(values, self->is_available != nullptr ? fl_value_new_bool(*self->is_available) : fl_value_new_null());
   return values;
 }
 
@@ -849,7 +864,14 @@ static FlutterPrintPrinterInfo* flutter_print_printer_info_new_from_list(FlValue
   gboolean is_default = fl_value_get_bool(value3);
   FlValue* value4 = fl_value_get_list_value(values, 4);
   FlutterPrintPrinterCapabilities* capabilities = FLUTTER_PRINT_PRINTER_CAPABILITIES(fl_value_get_custom_value_object(value4));
-  return flutter_print_printer_info_new(label, address, description, is_default, capabilities);
+  FlValue* value5 = fl_value_get_list_value(values, 5);
+  gboolean* is_available = nullptr;
+  gboolean is_available_value;
+  if (fl_value_get_type(value5) != FL_VALUE_TYPE_NULL) {
+    is_available_value = fl_value_get_bool(value5);
+    is_available = &is_available_value;
+  }
+  return flutter_print_printer_info_new(label, address, description, is_default, capabilities, is_available);
 }
 
 gboolean flutter_print_printer_info_equals(FlutterPrintPrinterInfo* a, FlutterPrintPrinterInfo* b) {
@@ -874,6 +896,12 @@ gboolean flutter_print_printer_info_equals(FlutterPrintPrinterInfo* a, FlutterPr
   if (!flutter_print_printer_capabilities_equals(a->capabilities, b->capabilities)) {
     return FALSE;
   }
+  if ((a->is_available == nullptr) != (b->is_available == nullptr)) {
+    return FALSE;
+  }
+  if (a->is_available != nullptr && *a->is_available != *b->is_available) {
+    return FALSE;
+  }
   return TRUE;
 }
 
@@ -885,6 +913,7 @@ guint flutter_print_printer_info_hash(FlutterPrintPrinterInfo* self) {
   result = result * 31 + (self->description != nullptr ? g_str_hash(self->description) : 0);
   result = result * 31 + static_cast<guint>(self->is_default);
   result = result * 31 + flutter_print_printer_capabilities_hash(self->capabilities);
+  result = result * 31 + (self->is_available != nullptr ? static_cast<guint>(*self->is_available) : 0);
   return result;
 }
 

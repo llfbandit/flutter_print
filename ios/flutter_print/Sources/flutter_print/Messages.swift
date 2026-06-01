@@ -466,6 +466,15 @@ struct PrinterInfo: Hashable {
   var isDefault: Bool
   /// Capabilities advertised by the printer.
   var capabilities: PrinterCapabilities
+  /// Whether the printer is currently online and accepting jobs.
+  ///
+  /// `true` — printer is idle or processing (online).
+  /// `false` — printer is offline or stopped.
+  /// `null` — availability cannot be determined on this platform
+  ///   (Android and iOS).
+  ///
+  /// Platform support: macOS, Windows, Linux.
+  var isAvailable: Bool? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -475,13 +484,15 @@ struct PrinterInfo: Hashable {
     let description: String? = nilOrValue(pigeonVar_list[2])
     let isDefault = pigeonVar_list[3] as! Bool
     let capabilities = pigeonVar_list[4] as! PrinterCapabilities
+    let isAvailable: Bool? = nilOrValue(pigeonVar_list[5])
 
     return PrinterInfo(
       label: label,
       address: address,
       description: description,
       isDefault: isDefault,
-      capabilities: capabilities
+      capabilities: capabilities,
+      isAvailable: isAvailable
     )
   }
   func toList() -> [Any?] {
@@ -491,13 +502,14 @@ struct PrinterInfo: Hashable {
       description,
       isDefault,
       capabilities,
+      isAvailable,
     ]
   }
   static func == (lhs: PrinterInfo, rhs: PrinterInfo) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return deepEqualsMessages(lhs.label, rhs.label) && deepEqualsMessages(lhs.address, rhs.address) && deepEqualsMessages(lhs.description, rhs.description) && deepEqualsMessages(lhs.isDefault, rhs.isDefault) && deepEqualsMessages(lhs.capabilities, rhs.capabilities)
+    return deepEqualsMessages(lhs.label, rhs.label) && deepEqualsMessages(lhs.address, rhs.address) && deepEqualsMessages(lhs.description, rhs.description) && deepEqualsMessages(lhs.isDefault, rhs.isDefault) && deepEqualsMessages(lhs.capabilities, rhs.capabilities) && deepEqualsMessages(lhs.isAvailable, rhs.isAvailable)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -507,6 +519,7 @@ struct PrinterInfo: Hashable {
     deepHashMessages(value: description, hasher: &hasher)
     deepHashMessages(value: isDefault, hasher: &hasher)
     deepHashMessages(value: capabilities, hasher: &hasher)
+    deepHashMessages(value: isAvailable, hasher: &hasher)
   }
 }
 
@@ -578,26 +591,6 @@ class MessagesPigeonCodec: FlutterStandardMessageCodec, @unchecked Sendable {
 
 /// Native print API. All methods are implemented on the host side and invoked
 /// from Dart through Pigeon-generated channels.
-///
-/// Platform support matrix:
-///
-/// | Method          | Android | iOS | macOS | Windows | Linux | Web |
-/// |-----------------|:-------:|:---:|:-----:|:-------:|:-----:|:---:|
-/// | [print]         |    ✓    |  ✓  |   ✓   |    ✓    |   ✓   |  ✗  |
-/// | [printPreview]  |    ✓*   |  ✓* |   ✓   |    ✓†   |   ✓†  |  ✗  |
-/// | [listPrinters]  |    ✗    |  ✗  |   ✓   |    ✓    |   ✓‡  |  ✗  |
-/// | [pickPrinter]   |    ✗    |  ✓  |   ✗   |    ✗    |   ✗   |  ✗  |
-///
-/// \* Android and iOS do not distinguish between a silent print and a preview:
-///   both methods open the system print dialog which includes a built-in
-///   preview step.
-///
-/// † On Windows, [printPreview] shows the native Windows print dialog
-///   (`PrintDlgEx`). On Linux, [printPreview] opens the file with `xdg-open`.
-///
-/// ‡ On Linux, printer enumeration requires the CUPS development libraries
-///   (`libcups-dev`) to be present at build time. When CUPS is unavailable
-///   an empty list is returned.
 ///
 /// Generated protocol from Pigeon that represents a handler of messages from Flutter.
 protocol FlutterPrintApi {

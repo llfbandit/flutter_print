@@ -330,10 +330,23 @@ static gpointer list_printers_worker(gpointer user_data) {
                                                nullptr, page_sizes);
     fl_value_unref(page_sizes);
 
+    // printer-state: 3=idle, 4=processing, 5=stopped/offline.
+    gboolean avail_val = FALSE;
+    gboolean* avail_ptr = nullptr;
+    const char* state_str = cupsGetOption("printer-state",
+                                          dests[i].num_options,
+                                          dests[i].options);
+    if (state_str) {
+      int state = atoi(state_str);
+      avail_val = (state == 3 || state == 4);
+      avail_ptr = &avail_val;
+    }
+
     // Build PrinterInfo — also uses the generated constructor.
     g_autoptr(FlutterPrintPrinterInfo) printer_info =
         flutter_print_printer_info_new(label, address, nullptr,
-                                       dests[i].is_default != 0, caps);
+                                       dests[i].is_default != 0, caps,
+                                       avail_ptr);
 
     fl_value_append_take(list,
         fl_value_new_custom_object(flutter_print_printer_info_type_id,

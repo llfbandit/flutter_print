@@ -49,18 +49,18 @@ enum DuplexMode {
 ///
 /// When both fields are present, [name] takes priority.
 class PageSize {
-  PageSize({required this.name, this.width, this.height});
+  const PageSize({required this.name, this.width, this.height});
 
   /// Well-known paper-size identifier. Common values: `'A3'`, `'A4'`, `'A5'`,
   /// `'Letter'`, `'Legal'`. See each platform's documentation for the full
   /// list of accepted names.
-  String name;
+  final String name;
 
   /// Page width in millimetres. Used when [name] is null or unrecognised.
-  double? width;
+  final double? width;
 
   /// Page height in millimetres. Used when [name] is null or unrecognised.
-  double? height;
+  final double? height;
 }
 
 /// Per-side page margins expressed in millimetres.
@@ -68,7 +68,7 @@ class PageSize {
 /// **iOS / Windows** — ignored; margins are controlled by the system dialog
 ///   or the application that handles the print verb.
 class PageMargins {
-  PageMargins({
+  const PageMargins({
     required this.top,
     required this.bottom,
     required this.left,
@@ -76,23 +76,23 @@ class PageMargins {
   });
 
   /// Top margin in millimetres.
-  double top;
+  final double top;
 
   /// Bottom margin in millimetres.
-  double bottom;
+  final double bottom;
 
   /// Left margin in millimetres.
-  double left;
+  final double left;
 
   /// Right margin in millimetres.
-  double right;
+  final double right;
 }
 
 /// Options controlling how a print or print-preview job is submitted.
 ///
 /// Unsupported fields on a given platform are silently ignored.
 class PrintOptions {
-  PrintOptions({
+  const PrintOptions({
     this.printerAddress,
     this.pageSize,
     this.margins,
@@ -113,44 +113,44 @@ class PrintOptions {
   /// - **macOS / Windows** — the printer display name (same as
   ///   [PrinterInfo.label] on these platforms).
   /// - **Linux** — the CUPS destination/queue name.
-  String? printerAddress;
+  final String? printerAddress;
 
   /// Desired output page size.
   ///
   /// Platform support: Android, macOS, Linux (named sizes only), Windows
   /// (passed to the associated application via the shell print verb, actual
   /// support depends on the application).
-  PageSize? pageSize;
+  final PageSize? pageSize;
 
   /// Output page margins.
   ///
   /// Ignored on iOS and Windows.
-  PageMargins? margins;
+  final PageMargins? margins;
 
   /// Number of copies to print. Must be ≥ 1.
   ///
   /// Ignored on iOS and Windows (controlled by the system dialog).
-  int copies;
+  final int copies;
 
   /// Whether to print in landscape orientation.
-  bool landscape;
+  final bool landscape;
 
   /// Whether to print in colour. Set to `false` for greyscale/monochrome.
-  bool color;
+  final bool color;
 
   /// Duplex (double-sided) printing mode.
   ///
   /// When `null` the platform default is used (typically single-sided).
   /// Ignored on iOS (controlled by the system dialog) and on Windows for
   /// non-image/non-PDF files delegated via ShellExecuteW.
-  DuplexMode? duplexMode;
+  final DuplexMode? duplexMode;
 }
 
 /// Capabilities of a specific printer as reported by the host platform.
 ///
 /// Fields may be `null` when the platform does not provide that information.
 class PrinterCapabilities {
-  PrinterCapabilities({
+  const PrinterCapabilities({
     this.supportsColor,
     this.supportsDuplex,
     this.maxCopies,
@@ -158,33 +158,34 @@ class PrinterCapabilities {
   });
 
   /// Whether the printer can print in colour. `null` if unknown.
-  bool? supportsColor;
+  final bool? supportsColor;
 
   /// Whether the printer supports duplex (double-sided) printing. `null` if
   /// unknown.
-  bool? supportsDuplex;
+  final bool? supportsDuplex;
 
   /// Maximum number of copies the printer accepts in a single job. `null` if
   /// unknown or unlimited.
-  int? maxCopies;
+  final int? maxCopies;
 
   /// Well-known page-size names accepted by this printer (e.g. `'A4'`,
   /// `'Letter'`). Empty when the platform does not report supported sizes.
-  List<String?> supportedPageSizes;
+  final List<String?> supportedPageSizes;
 }
 
 /// Describes a single printer returned by [FlutterPrintApi.listPrinters].
 class PrinterInfo {
-  PrinterInfo({
+  const PrinterInfo({
     required this.label,
     this.address,
     this.description,
     required this.isDefault,
     required this.capabilities,
+    this.isAvailable,
   });
 
   /// Human-readable display name shown to the user (e.g. `'HP LaserJet Pro'`).
-  String label;
+  final String label;
 
   /// Platform-specific technical identifier used to address the printer.
   ///
@@ -197,17 +198,27 @@ class PrinterInfo {
   ///   identifier on these platforms.
   /// - **Linux** — CUPS destination/queue name (e.g. `'HP_LaserJet_Pro'`).
   /// - **Android** — not set; the user selects the printer inside the dialog.
-  String? address;
+  final String? address;
 
   /// Optional longer description provided by the platform (e.g. the printer
   /// model or location). May be `null`.
-  String? description;
+  final String? description;
 
   /// Whether this is the current system-default printer.
-  bool isDefault;
+  final bool isDefault;
 
   /// Capabilities advertised by the printer.
-  PrinterCapabilities capabilities;
+  final PrinterCapabilities capabilities;
+
+  /// Whether the printer is currently online and accepting jobs.
+  ///
+  /// `true` — printer is idle or processing (online).
+  /// `false` — printer is offline or stopped.
+  /// `null` — availability cannot be determined on this platform
+  ///   (Android and iOS).
+  ///
+  /// Platform support: macOS, Windows, Linux.
+  final bool? isAvailable;
 }
 
 // ---------------------------------------------------------------------------

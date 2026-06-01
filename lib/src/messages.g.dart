@@ -404,6 +404,7 @@ class PrinterInfo {
     this.description,
     required this.isDefault,
     required this.capabilities,
+    this.isAvailable,
   });
 
   /// Human-readable display name shown to the user (e.g. `'HP LaserJet Pro'`).
@@ -432,6 +433,16 @@ class PrinterInfo {
   /// Capabilities advertised by the printer.
   PrinterCapabilities capabilities;
 
+  /// Whether the printer is currently online and accepting jobs.
+  ///
+  /// `true` — printer is idle or processing (online).
+  /// `false` — printer is offline or stopped.
+  /// `null` — availability cannot be determined on this platform
+  ///   (Android and iOS).
+  ///
+  /// Platform support: macOS, Windows, Linux.
+  bool? isAvailable;
+
   List<Object?> _toList() {
     return <Object?>[
       label,
@@ -439,6 +450,7 @@ class PrinterInfo {
       description,
       isDefault,
       capabilities,
+      isAvailable,
     ];
   }
 
@@ -453,6 +465,7 @@ class PrinterInfo {
       description: result[2] as String?,
       isDefault: result[3]! as bool,
       capabilities: result[4]! as PrinterCapabilities,
+      isAvailable: result[5] as bool?,
     );
   }
 
@@ -465,7 +478,7 @@ class PrinterInfo {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(label, other.label) && _deepEquals(address, other.address) && _deepEquals(description, other.description) && _deepEquals(isDefault, other.isDefault) && _deepEquals(capabilities, other.capabilities);
+    return _deepEquals(label, other.label) && _deepEquals(address, other.address) && _deepEquals(description, other.description) && _deepEquals(isDefault, other.isDefault) && _deepEquals(capabilities, other.capabilities) && _deepEquals(isAvailable, other.isAvailable);
   }
 
   @override
@@ -528,26 +541,6 @@ class _PigeonCodec extends StandardMessageCodec {
 
 /// Native print API. All methods are implemented on the host side and invoked
 /// from Dart through Pigeon-generated channels.
-///
-/// Platform support matrix:
-///
-/// | Method          | Android | iOS | macOS | Windows | Linux | Web |
-/// |-----------------|:-------:|:---:|:-----:|:-------:|:-----:|:---:|
-/// | [print]         |    ✓    |  ✓  |   ✓   |    ✓    |   ✓   |  ✗  |
-/// | [printPreview]  |    ✓*   |  ✓* |   ✓   |    ✓†   |   ✓†  |  ✗  |
-/// | [listPrinters]  |    ✗    |  ✗  |   ✓   |    ✓    |   ✓‡  |  ✗  |
-/// | [pickPrinter]   |    ✗    |  ✓  |   ✗   |    ✗    |   ✗   |  ✗  |
-///
-/// \* Android and iOS do not distinguish between a silent print and a preview:
-///   both methods open the system print dialog which includes a built-in
-///   preview step.
-///
-/// † On Windows, [printPreview] shows the native Windows print dialog
-///   (`PrintDlgEx`). On Linux, [printPreview] opens the file with `xdg-open`.
-///
-/// ‡ On Linux, printer enumeration requires the CUPS development libraries
-///   (`libcups-dev`) to be present at build time. When CUPS is unavailable
-///   an empty list is returned.
 class FlutterPrintApi {
   /// Constructor for [FlutterPrintApi].  The [binaryMessenger] named argument is
   /// available for dependency injection.  If it is left null, the default

@@ -185,9 +185,10 @@ void FlutterPrintPlugin::ListPrinters(
         descPtr = &descStr;
       }
       const std::string nameUtf8 = WideToUtf8(name);
+      bool avail = !(info[i].Status & PRINTER_STATUS_OFFLINE);
       printers.push_back(flutter::CustomEncodableValue(PrinterInfo(
           nameUtf8, &nameUtf8, descPtr, std::wstring(name) == defaultPrinter,
-          caps)));
+          caps, &avail)));
     }
     result(printers);
   }).detach();

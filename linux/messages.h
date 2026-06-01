@@ -427,12 +427,13 @@ G_DECLARE_FINAL_TYPE(FlutterPrintPrinterInfo, flutter_print_printer_info, FLUTTE
  * description: field in this object.
  * is_default: field in this object.
  * capabilities: field in this object.
+ * is_available: field in this object.
  *
  * Creates a new #PrinterInfo object.
  *
  * Returns: a new #FlutterPrintPrinterInfo
  */
-FlutterPrintPrinterInfo* flutter_print_printer_info_new(const gchar* label, const gchar* address, const gchar* description, gboolean is_default, FlutterPrintPrinterCapabilities* capabilities);
+FlutterPrintPrinterInfo* flutter_print_printer_info_new(const gchar* label, const gchar* address, const gchar* description, gboolean is_default, FlutterPrintPrinterCapabilities* capabilities, gboolean* is_available);
 
 /**
  * flutter_print_printer_info_get_label
@@ -494,6 +495,23 @@ gboolean flutter_print_printer_info_get_is_default(FlutterPrintPrinterInfo* obje
  * Returns: the field value.
  */
 FlutterPrintPrinterCapabilities* flutter_print_printer_info_get_capabilities(FlutterPrintPrinterInfo* object);
+
+/**
+ * flutter_print_printer_info_get_is_available
+ * @object: a #FlutterPrintPrinterInfo.
+ *
+ * Whether the printer is currently online and accepting jobs.
+ *
+ * `true` — printer is idle or processing (online).
+ * `false` — printer is offline or stopped.
+ * `null` — availability cannot be determined on this platform
+ *   (Android and iOS).
+ *
+ * Platform support: macOS, Windows, Linux.
+ *
+ * Returns: the field value.
+ */
+gboolean* flutter_print_printer_info_get_is_available(FlutterPrintPrinterInfo* object);
 
 /**
  * flutter_print_printer_info_equals:
