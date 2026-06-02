@@ -8,7 +8,9 @@ export 'src/flutter_print_platform_interface.dart'
         PrinterInfo;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
+import 'src/document_renderer.dart';
 import 'src/flutter_print_platform_interface.dart';
 
 /// Named paper-size presets.
@@ -81,6 +83,105 @@ class FlutterPrint {
   }) => directPrint
       ? FlutterPrintPlatform.instance.print(filePath, options: options)
       : FlutterPrintPlatform.instance.printPreview(filePath, options: options);
+
+  /// Renders the widget returned by [builder] off-screen and prints it as a
+  /// single-page PDF.
+  ///
+  /// [builder] receives the caller's [BuildContext], which can be used to
+  /// inherit [Theme], [Localizations], or any other [InheritedWidget]:
+  ///
+  /// ```dart
+  /// FlutterPrint.printDocument(
+  ///   context: context,
+  ///   (ctx) => Theme(data: Theme.of(ctx), child: MyReceiptWidget()),
+  ///   options: PrintOptions(pageSize: PaperSizes.a4),
+  /// );
+  /// ```
+  ///
+  /// [MediaQuery.size] and [MediaQuery.devicePixelRatio] are always overridden
+  /// to match the content area so the widget lays out for the page, not the
+  /// screen.
+  ///
+  /// The printable area is derived from [options]:
+  /// - **Page size** — `options.pageSize` (defaults to A4 when `null`).
+  /// - **Margins** — `options.margins` (defaults to no margins when `null`).
+  ///
+  /// [dpi] controls the pixel density used when rasterising the widget.
+  /// Higher values produce sharper output at the cost of a larger PDF.
+  /// 300 DPI is suitable for most print jobs; 150 DPI is acceptable for
+  /// draft output and yields files roughly four times smaller.
+  ///
+  /// [contentSize] decouples the widget's layout dimensions from the PDF page
+  /// size. When provided, the widget is rendered at [contentSize] and centred
+  /// within the page defined by `options.pageSize`. This is useful when the
+  /// widget has fixed or card-like proportions that should not fill the entire
+  /// page.
+  ///
+  /// ```dart
+  /// FlutterPrint.printDocument(
+  ///   context: context,
+  ///   (ctx) => Theme(data: Theme.of(ctx), child: BusinessCard()),
+  ///   options: PrintOptions(pageSize: PaperSizes.a4),
+  ///   contentSize: PageSize(name: 'Business Card', width: 85.6, height: 54.0),
+  /// );
+  /// ```
+  ///
+  /// When [contentSize] is `null` the widget fills the full printable area of
+  /// the page (original behaviour).
+  static Future<void> printWidget(
+    WidgetBuilder builder, {
+    required BuildContext context,
+    PrintOptions? options,
+    bool directPrint = false,
+    double dpi = 300,
+    PageSize? contentSize,
+  }) async {
+    final bytes = await renderWidgetToPdf(
+      builder: builder,
+      context: context,
+      dpi: dpi,
+      pageSize: options?.pageSize,
+      contentSize: contentSize,
+      margins: options?.margins,
+    );
+    await FlutterPrintPlatform.instance.printBytes(
+      bytes,
+      options: options,
+      directPrint: directPrint,
+    );
+  }
+
+  /// Renders the widget returned by [builder] off-screen and returns the result
+  /// as PNG image bytes for in-app preview.
+  ///
+  /// Use [Image.memory] to display the returned bytes:
+  ///
+  /// ```dart
+  /// final png = await FlutterPrint.previewDocument(
+  ///   (ctx) => Theme(data: Theme.of(ctx), child: MyReceiptWidget()),
+  ///   context: context,
+  ///   options: PrintOptions(pageSize: PaperSizes.a4),
+  /// );
+  /// // …
+  /// Image.memory(png)
+  /// ```
+  ///
+  /// [contentSize] works identically to [printWidget.contentSize]: the widget
+  /// is rendered at [contentSize] and would be centred on `options.pageSize`
+  /// if later passed to [printWidget].
+  static Future<Uint8List> previewWidget(
+    WidgetBuilder builder, {
+    required BuildContext context,
+    PrintOptions? options,
+    PageSize? contentSize,
+  }) => renderWidgetToImage(
+    builder: builder,
+    context: context,
+    dpi: MediaQuery.of(context).devicePixelRatio * 96,
+    pageSize: options?.pageSize,
+    contentSize: contentSize,
+    margins: options?.margins,
+  );
 
   /// Returns the list of printers available on this device.
   ///

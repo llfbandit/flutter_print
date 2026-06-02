@@ -36,6 +36,19 @@ class FlutterPrintWeb extends FlutterPrintPlatform {
   Future<void> printPreview(String filePath, {PrintOptions? options}) =>
       _printUrl(filePath);
 
+  @override
+  Future<void> printBytes(
+    Uint8List bytes, {
+    PrintOptions? options,
+    bool directPrint = false,
+  }) async {
+    final blob = web.Blob(
+      [bytes.buffer.toJS].toJS,
+      web.BlobPropertyBag(type: 'application/pdf'),
+    );
+    await _printUrl(web.URL.createObjectURL(blob));
+  }
+
   /// Always returns an empty list — the browser does not expose a
   /// printer-enumeration API.
   @override

@@ -77,9 +77,13 @@ bool IsPdfFile(const std::wstring& path) {
 // ---------------------------------------------------------------------------
 
 int NameToDMPaper(const std::string& name) {
+  if (name == "A0")        return DMPAPER_A0;
+  if (name == "A1")        return DMPAPER_A1;
+  if (name == "A2")        return DMPAPER_A2;
   if (name == "A3")        return DMPAPER_A3;
   if (name == "A4")        return DMPAPER_A4;
   if (name == "A5")        return DMPAPER_A5;
+  if (name == "A6")        return DMPAPER_A6;
   if (name == "Letter")    return DMPAPER_LETTER;
   if (name == "Legal")     return DMPAPER_LEGAL;
   if (name == "Tabloid")   return DMPAPER_TABLOID;
@@ -123,10 +127,18 @@ void ApplyOptionsToDEVMODE(DEVMODE* dm, const PrintOptions& options) {
       const double* w = ps->width();
       const double* h = ps->height();
       if (w && h && *w > 0 && *h > 0) {
+        // dmPaperWidth is always the short edge and dmPaperLength the long edge
+        // (tenths of mm), independently of dmOrientation.
+        const double shortEdge = std::min(*w, *h);
+        const double longEdge  = std::max(*w, *h);
         dm->dmPaperSize   = DMPAPER_USER;
-        dm->dmPaperWidth  = static_cast<short>(*w * 10.0);
-        dm->dmPaperLength = static_cast<short>(*h * 10.0);
+        dm->dmPaperWidth  = static_cast<short>(std::round(shortEdge * 10.0));
+        dm->dmPaperLength = static_cast<short>(std::round(longEdge  * 10.0));
         dm->dmFields     |= DM_PAPERSIZE | DM_PAPERWIDTH | DM_PAPERLENGTH;
+        // dmPaperWidth = short edge, dmPaperLength = long edge.
+        // Portrait DC: width = short edge; Landscape DC: width = long edge.
+        // Override so the DC width always matches the requested page width.
+        dm->dmOrientation = (*w > *h) ? DMORIENT_LANDSCAPE : DMORIENT_PORTRAIT;
       }
     }
   }
@@ -151,6 +163,11 @@ HGLOBAL BuildDevMode(const std::wstring& printerName,
                            const_cast<LPWSTR>(printerName.c_str()),
                            dm, nullptr, DM_OUT_BUFFER) == IDOK) {
     ApplyOptionsToDEVMODE(dm, options);
+    // Let the driver validate and normalise our changes; without this round-trip
+    // many drivers silently ignore the modified DEVMODE and produce a blank job.
+    DocumentPropertiesW(nullptr, hPrinter,
+                         const_cast<LPWSTR>(printerName.c_str()),
+                         dm, dm, DM_IN_BUFFER | DM_OUT_BUFFER);
   }
   GlobalUnlock(h);
   ClosePrinter(hPrinter);
@@ -367,12 +384,17 @@ std::optional<FlutterError> RenderPdfToDC(HDC hdc, const std::wstring& path) {
     return FlutterError("PDF_ERROR", "Cannot open PDF: " + utf8);
   }
 
-  const double dpiX      = GetDeviceCaps(hdc, LOGPIXELSX);
-  const double dpiY      = GetDeviceCaps(hdc, LOGPIXELSY);
-  const int    printableW = GetDeviceCaps(hdc, HORZRES);
-  const int    printableH = GetDeviceCaps(hdc, VERTRES);
-  const int    marginLeft = GetDeviceCaps(hdc, PHYSICALOFFSETX);
-  const int    marginTop  = GetDeviceCaps(hdc, PHYSICALOFFSETY);
+  // Scaling factor: PDF points (1/72 in) to device pixels.
+  const double dpiX = static_cast<double>(GetDeviceCaps(hdc, LOGPIXELSX)) / 72.0;
+  const double dpiY = static_cast<double>(GetDeviceCaps(hdc, LOGPIXELSY)) / 72.0;
+
+  // Physical paper dimensions as resolved by the driver (reflects the actual
+  // paper loaded, which may differ from the requested custom size).
+  const int physW = GetDeviceCaps(hdc, PHYSICALWIDTH);
+  const int physH = GetDeviceCaps(hdc, PHYSICALHEIGHT);
+  // Offset from the physical paper edge to the printable-area origin (DC origin).
+  const int marginLeft = GetDeviceCaps(hdc, PHYSICALOFFSETX);
+  const int marginTop  = GetDeviceCaps(hdc, PHYSICALOFFSETY);
 
   DOCINFOW di = {};
   di.cbSize      = sizeof(di);
@@ -386,17 +408,23 @@ std::optional<FlutterError> RenderPdfToDC(HDC hdc, const std::wstring& path) {
       FPDF_PAGE page = FPDF_LoadPage(doc, i);
       if (!page) continue;
 
-      // PDF points (1/72 in) → printer device units, then scale to fit.
-      const double nativeW = FPDF_GetPageWidth(page)  * dpiX / 72.0;
-      const double nativeH = FPDF_GetPageHeight(page) * dpiY / 72.0;
-      const double scale   = std::min(printableW / nativeW, printableH / nativeH);
-      const int renderW    = static_cast<int>(nativeW * scale);
-      const int renderH    = static_cast<int>(nativeH * scale);
-      const int offsetX    = (printableW - renderW) / 2 - marginLeft;
-      const int offsetY    = (printableH - renderH) / 2 - marginTop;
+      // Native size: PDF points to device pixels.
+      const int nativeW = static_cast<int>(FPDF_GetPageWidth(page)  * dpiX);
+      const int nativeH = static_cast<int>(FPDF_GetPageHeight(page) * dpiY);
 
+      // Scale down only when the PDF overflows the physical paper; never upscale.
+      // PHYSICALWIDTH/HEIGHT reflect what the driver actually resolved to, so
+      // this handles matching paper (scale = 1) and fallback paper (PDF fits).
+      const double scale = std::min({1.0,
+          static_cast<double>(physW) / nativeW,
+          static_cast<double>(physH) / nativeH});
+      const int renderW = static_cast<int>(nativeW * scale);
+      const int renderH = static_cast<int>(nativeH * scale);
+
+      // PDFium on Windows GDI must be anchored at the physical page origin.
+      // Positive-only offsets (e.g. printable-area relative) produce blank output.
       StartPage(hdc);
-      FPDF_RenderPage(hdc, page, offsetX, offsetY, renderW, renderH,
+      FPDF_RenderPage(hdc, page, -marginLeft, -marginTop, renderW, renderH,
                       0, FPDF_ANNOT | FPDF_PRINTING);
       EndPage(hdc);
       FPDF_ClosePage(page);

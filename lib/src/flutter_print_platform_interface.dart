@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'flutter_print_method_channel.dart';
@@ -22,6 +24,14 @@ abstract class FlutterPrintPlatform extends PlatformInterface {
 
   Future<void> print(String filePath, {PrintOptions? options}) {
     throw UnimplementedError('print() has not been implemented.');
+  }
+
+  Future<void> printBytes(
+    Uint8List bytes, {
+    PrintOptions? options,
+    bool directPrint = false,
+  }) {
+    throw UnimplementedError('printBytes() has not been implemented.');
   }
 
   Future<void> printPreview(String filePath, {PrintOptions? options}) {

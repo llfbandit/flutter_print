@@ -9,7 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'blob/blob_url.dart';
 import 'widgets.dart';
 
-enum _FileType { pdf, image, text }
+enum _Source { pdf, image, text, widget }
 
 // Available paper sizes for the dropdown.
 final _paperSizes = [
@@ -31,8 +31,8 @@ class PrintPage extends StatefulWidget {
 }
 
 class _PrintPageState extends State<PrintPage> {
-  // --- file selection
-  _FileType _fileType = _FileType.pdf;
+  // --- source selection
+  _Source _source = _Source.pdf;
 
   // --- print options
   int _paperSizeIndex = 1; // A4
@@ -46,17 +46,19 @@ class _PrintPageState extends State<PrintPage> {
   PrinterInfo? _selectedPrinter;
   bool _loadingPrinters = false;
 
-  // --- status
+  // --- status / preview
   bool _busy = false;
   String? _status;
   bool _statusIsError = false;
+  Uint8List? _previewImage;
 
   // ---------------------------------------------------------------------------
 
-  String get _assetPath => switch (_fileType) {
-    _FileType.pdf => 'assets/document.pdf',
-    _FileType.image => 'assets/image.jpg',
-    _FileType.text => 'assets/text.txt',
+  String get _assetPath => switch (_source) {
+    _Source.pdf => 'assets/document.pdf',
+    _Source.image => 'assets/image.jpg',
+    _Source.text => 'assets/text.txt',
+    _Source.widget => throw StateError('no asset for widget source'),
   };
 
   /// On web: creates a blob URL from the bundled asset bytes.
@@ -66,10 +68,11 @@ class _PrintPageState extends State<PrintPage> {
     final data = bytes.buffer.asUint8List();
 
     if (kIsWeb) {
-      final mime = switch (_fileType) {
-        _FileType.pdf => 'application/pdf',
-        _FileType.image => 'image/jpeg',
-        _FileType.text => 'text/plain',
+      final mime = switch (_source) {
+        _Source.pdf => 'application/pdf',
+        _Source.image => 'image/jpeg',
+        _Source.text => 'text/plain',
+        _Source.widget => throw StateError('no asset for widget source'),
       };
       return createBlobUrl(data, mime);
     }
@@ -85,9 +88,9 @@ class _PrintPageState extends State<PrintPage> {
     printerAddress: _selectedPrinter?.address,
     pageSize: _paperSizes[_paperSizeIndex],
     copies: _copies,
-    landscape: _landscape,
+    landscape: _source == _Source.widget ? false : _landscape,
     color: _color,
-    duplexMode: _duplexMode,
+    duplexMode: _source == _Source.widget ? null : _duplexMode,
   );
 
   // ---------------------------------------------------------------------------
@@ -130,19 +133,68 @@ class _PrintPageState extends State<PrintPage> {
     }
   }
 
-  Future<void> _print({required bool directPrint}) async {
+  Future<void> _doPreview() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _status = null;
+      _previewImage = null;
+    });
+    try {
+      await precacheImage(const AssetImage('assets/image.jpg'), context);
+      if (!mounted) return;
+      final png = await FlutterPrint.previewWidget(
+        (ctx) => Theme(
+          data: Theme.of(ctx),
+          child: const Material(child: BusinessCard()),
+        ),
+        context: context,
+        options: _options,
+        contentSize: PageSize(name: 'Business Card', width: 85.6, height: 54.0),
+      );
+      setState(() => _previewImage = png);
+      _show('Preview rendered');
+    } on PlatformException catch (e) {
+      _showError(e.message ?? 'preview failed');
+    } finally {
+      setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _doPrint({required bool directPrint}) async {
     if (_busy) return;
     setState(() {
       _busy = true;
       _status = null;
     });
     try {
-      final path = await _resolveFilePath();
-      await FlutterPrint.print(
-        path,
-        options: _options,
-        directPrint: directPrint,
-      );
+      if (_source == _Source.widget) {
+        // Pre-warm the image cache so the asset is available during
+        // off-screen rendering (Image.asset loads asynchronously otherwise).
+        await precacheImage(const AssetImage('assets/image.jpg'), context);
+        if (!mounted) return;
+        await FlutterPrint.printWidget(
+          (ctx) => Theme(
+            data: Theme.of(ctx),
+            child: const Material(child: BusinessCard()),
+          ),
+          context: context,
+          options: _options,
+          directPrint: directPrint,
+          contentSize: PageSize(
+            name: 'Business Card',
+            width: 85.6,
+            height: 54.0,
+          ),
+        );
+      } else {
+        final path = await _resolveFilePath();
+        await FlutterPrint.print(
+          path,
+          options: _options,
+          directPrint: directPrint,
+        );
+      }
       _show(directPrint ? 'Job submitted' : 'Dialog closed');
     } on PlatformException catch (e) {
       _showError(e.message ?? 'print failed');
@@ -177,35 +229,21 @@ class _PrintPageState extends State<PrintPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // ---- sample file
+          // ---- source
           SectionCard(
-            title: 'Sample file',
-            child: RadioGroup<_FileType>(
-              groupValue: _fileType,
-              onChanged: (v) => setState(() => _fileType = v!),
-              child: Row(
+            title: 'Print source',
+            child: RadioGroup<_Source>(
+              groupValue: _source,
+              onChanged: (v) => setState(() {
+                _source = v!;
+                _previewImage = null;
+              }),
+              child: Wrap(
                 children: [
-                  Expanded(
-                    child: RadioListTile<_FileType>(
-                      title: const Text('PDF'),
-                      value: _FileType.pdf,
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ),
-                  Expanded(
-                    child: RadioListTile<_FileType>(
-                      title: const Text('Image'),
-                      value: _FileType.image,
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ),
-                  Expanded(
-                    child: RadioListTile<_FileType>(
-                      title: const Text('Other'),
-                      value: _FileType.text,
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ),
+                  _radio('PDF', _Source.pdf),
+                  _radio('Image', _Source.image),
+                  _radio('Other', _Source.text),
+                  _radio('Widget', _Source.widget),
                 ],
               ),
             ),
@@ -271,11 +309,23 @@ class _PrintPageState extends State<PrintPage> {
                 DropdownButtonFormField<DuplexMode?>(
                   decoration: const InputDecoration(labelText: 'Duplex'),
                   initialValue: _duplexMode,
-                  items: [
-                    const DropdownMenuItem(value: null,                  child: Text('Platform default')),
-                    DropdownMenuItem(value: DuplexMode.none,       child: const Text('Single-sided')),
-                    DropdownMenuItem(value: DuplexMode.longEdge,   child: const Text('Double-sided — long edge')),
-                    DropdownMenuItem(value: DuplexMode.shortEdge,  child: const Text('Double-sided — short edge')),
+                  items: const [
+                    DropdownMenuItem(
+                      value: null,
+                      child: Text('Platform default'),
+                    ),
+                    DropdownMenuItem(
+                      value: DuplexMode.none,
+                      child: Text('Single-sided'),
+                    ),
+                    DropdownMenuItem(
+                      value: DuplexMode.longEdge,
+                      child: Text('Double-sided — long edge'),
+                    ),
+                    DropdownMenuItem(
+                      value: DuplexMode.shortEdge,
+                      child: Text('Double-sided — short edge'),
+                    ),
                   ],
                   onChanged: (v) => setState(() => _duplexMode = v),
                 ),
@@ -357,14 +407,22 @@ class _PrintPageState extends State<PrintPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (_source == _Source.widget) ...[
+                  FilledButton.icon(
+                    onPressed: _busy ? null : _doPreview,
+                    icon: const Icon(Icons.image_search),
+                    label: const Text('Preview widget'),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 FilledButton.icon(
-                  onPressed: _busy ? null : () => _print(directPrint: true),
+                  onPressed: _busy ? null : () => _doPrint(directPrint: true),
                   icon: const Icon(Icons.print),
                   label: const Text('Print — direct (no dialog)'),
                 ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
-                  onPressed: _busy ? null : () => _print(directPrint: false),
+                  onPressed: _busy ? null : () => _doPrint(directPrint: false),
                   icon: const Icon(Icons.print_outlined),
                   label: const Text('Print — show native dialog'),
                 ),
@@ -390,8 +448,25 @@ class _PrintPageState extends State<PrintPage> {
                 ),
               ),
             ),
+
+          if (_previewImage != null) ...[
+            const SizedBox(height: 12),
+            SectionCard(
+              title: 'Preview',
+              child: Image.memory(_previewImage!, fit: BoxFit.contain),
+            ),
+          ],
         ],
       ),
     );
   }
+
+  Widget _radio(String label, _Source value) => SizedBox(
+    width: 120,
+    child: RadioListTile<_Source>(
+      title: Text(label),
+      value: value,
+      contentPadding: EdgeInsets.zero,
+    ),
+  );
 }
