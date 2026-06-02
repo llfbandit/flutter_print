@@ -1,6 +1,6 @@
 name: flutter_print
-description: "A Flutter plugin focusing on print, that's it."
-version: 0.1.0
+description: "A Flutter plugin focusing on print, that's it. PDF, image, widget and other content."
+version: 0.2.0
 homepage: https://github.com/llfbandit/flutter_print
 
 topics: 

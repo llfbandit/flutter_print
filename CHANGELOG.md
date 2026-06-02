@@ -1,3 +1,8 @@
+## 0.2.0
+* feat: Add `printWidget` and `previewWidget` for widget printing.
+* fix(linux): Add page size presets.
+* fix(windows): Custom page print.
+
 ## 0.1.0
 
 * feat: Initial release with support for Android, iOS, macOS, Windows, Linux and Web

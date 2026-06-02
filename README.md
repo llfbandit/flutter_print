@@ -7,6 +7,8 @@ A Flutter plugin focusing on print, that's it.
 **All other file types** (HTML, plain text, Office documents, …) are forwarded to the platform's default handler for that format.
 `PrintOptions` fields other than `printerName` may not be forwarded in this case.
 
+**Widgets** are rendered as image in a (single page) pdf.
+
 ---
 
 ## Usage
@@ -49,6 +51,30 @@ await FlutterPrint.print(
     color: true,
   ),
 );
+```
+
+### Widget print
+
+Render any Flutter widget off-screen and print it directly — no file needed.
+`printWidget` rasterises the widget into a single-page PDF and sends it to the
+printer. `previewWidget` does the same but returns PNG bytes you can display
+with `Image.memory` before printing.
+
+```dart
+// Print a widget
+await FlutterPrint.printWidget(
+  (ctx) => Theme(data: Theme.of(ctx), child: MyReceiptWidget()),
+  context: context,
+  options: PrintOptions(pageSize: PaperSizes.a4),
+);
+
+// Preview a widget in-app before printing
+final png = await FlutterPrint.previewWidget(
+  (ctx) => Theme(data: Theme.of(ctx), child: MyReceiptWidget()),
+  context: context,
+  options: PrintOptions(pageSize: PaperSizes.a4),
+);
+Image.memory(png);
 ```
 
 ---
