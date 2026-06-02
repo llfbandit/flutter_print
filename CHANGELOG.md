@@ -1,3 +1,6 @@
+## 0.2.3
+* fix: WASM compilation for pub.dev score.
+
 ## 0.2.2
 * fix: `printWidget` with transparent background.
 

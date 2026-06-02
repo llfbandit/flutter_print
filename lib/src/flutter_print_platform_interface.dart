@@ -2,11 +2,18 @@ import 'dart:typed_data';
 
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
-import 'flutter_print_method_channel.dart';
+import 'flutter_print_method_channel.dart'
+    if (dart.library.js_interop) 'flutter_print_method_channel_stub.dart';
 import 'messages.g.dart';
 
 export 'messages.g.dart'
-    show DuplexMode, PageSize, PageMargins, PrintOptions, PrinterCapabilities, PrinterInfo;
+    show
+        DuplexMode,
+        PageSize,
+        PageMargins,
+        PrintOptions,
+        PrinterCapabilities,
+        PrinterInfo;
 
 abstract class FlutterPrintPlatform extends PlatformInterface {
   FlutterPrintPlatform() : super(token: _token);
