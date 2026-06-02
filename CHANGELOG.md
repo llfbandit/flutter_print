@@ -1,3 +1,6 @@
+## 0.2.2
+* fix: `printWidget` with transparent background.
+
 ## 0.2.1
 * fix: pages size presets.
 

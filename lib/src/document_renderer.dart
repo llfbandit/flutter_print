@@ -63,8 +63,8 @@ Future<Uint8List> renderWidgetToPdf({
     rgbBytes: rgbBytes,
     pageWidthPts: s.pageWidthPts,
     pageHeightPts: s.pageHeightPts,
-    imageWidthPts: imageWidth / s.pixelRatio,
-    imageHeightPts: imageHeight / s.pixelRatio,
+    imageWidthPts: s.logicalSize.width,
+    imageHeightPts: s.logicalSize.height,
     printWidthPts: s.printWidthPts,
     printHeightPts: s.printHeightPts,
     marginLeftPts: s.marginLeftPts,
@@ -238,9 +238,12 @@ Future<Uint8List> _toRgbBytes(ui.Image image) async {
   final rgba = byteData.buffer.asUint8List();
   final rgb = Uint8List(image.width * image.height * 3);
   for (int i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
-    rgb[j] = rgba[i];
-    rgb[j + 1] = rgba[i + 1];
-    rgb[j + 2] = rgba[i + 2];
+    // rawRgba uses premultiplied alpha. Composite over white:
+    //   out = premul_rgb + 255 * (1 - a/255)  =  premul_rgb + 255 - a
+    final int a = rgba[i + 3];
+    rgb[j] = (rgba[i] + 255 - a).clamp(0, 255);
+    rgb[j + 1] = (rgba[i + 1] + 255 - a).clamp(0, 255);
+    rgb[j + 2] = (rgba[i + 2] + 255 - a).clamp(0, 255);
   }
   return rgb;
 }
