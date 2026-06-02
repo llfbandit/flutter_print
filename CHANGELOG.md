@@ -1,3 +1,6 @@
+## 0.2.1
+* fix: pages size presets.
+
 ## 0.2.0
 * feat: Add `printWidget` and `previewWidget` for widget printing.
 * fix(linux): Add page size presets.

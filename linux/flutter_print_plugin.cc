@@ -38,35 +38,6 @@ static void flutter_print_plugin_class_init(FlutterPrintPluginClass* klass) {
 static void flutter_print_plugin_init(FlutterPrintPlugin* self) {}
 
 
-// Maps Dart PaperSizes preset names to canonical PWG/IPP media names.
-// Returns nullptr for unknown names (caller falls back to the raw name).
-static const char* name_to_cups_media(const char* name) {
-  if (!name) return nullptr;
-  // ISO A-series
-  if (strcmp(name, "A0")        == 0) return "iso_a0_841x1189mm";
-  if (strcmp(name, "A1")        == 0) return "iso_a1_594x841mm";
-  if (strcmp(name, "A2")        == 0) return "iso_a2_420x594mm";
-  if (strcmp(name, "A3")        == 0) return "iso_a3_297x420mm";
-  if (strcmp(name, "A4")        == 0) return "iso_a4_210x297mm";
-  if (strcmp(name, "A5")        == 0) return "iso_a5_148x210mm";
-  if (strcmp(name, "A6")        == 0) return "iso_a6_105x148mm";
-  // ISO B-series
-  if (strcmp(name, "B4")        == 0) return "iso_b4_250x353mm";
-  if (strcmp(name, "B5")        == 0) return "iso_b5_176x250mm";
-  // North American
-  if (strcmp(name, "Letter")    == 0) return "na_letter_8.5x11in";
-  if (strcmp(name, "Legal")     == 0) return "na_legal_8.5x14in";
-  if (strcmp(name, "Tabloid")   == 0) return "na_ledger_11x17in";
-  if (strcmp(name, "Executive") == 0) return "na_executive_7.25x10.5in";
-  // JIS B-series
-  if (strcmp(name, "JIS B4")    == 0) return "jis_b4_257x364mm";
-  if (strcmp(name, "JIS B5")    == 0) return "jis_b5_182x257mm";
-  // Envelopes
-  if (strcmp(name, "C5")        == 0) return "iso_c5_162x229mm";
-  if (strcmp(name, "DL")        == 0) return "iso_dl_110x220mm";
-  return nullptr;
-}
-
 // Returns true for formats CUPS typically cannot rasterise natively.
 static bool needs_transcode(const char* path) {
   const char* dot = strrchr(path, '.');
@@ -170,9 +141,7 @@ static FlutterPrintFlutterPrintApiPrintResponse* handle_print(
   if (page_size) {
     const gchar* size_name = flutter_print_page_size_get_name(page_size);
     if (size_name && size_name[0] != '\0') {
-      const char* media = name_to_cups_media(size_name);
-      num_options = cupsAddOption("media", media ? media : size_name,
-                                  num_options, &cups_opts);
+      num_options = cupsAddOption("media", size_name, num_options, &cups_opts);
     } else {
       double* width  = flutter_print_page_size_get_width(page_size);
       double* height = flutter_print_page_size_get_height(page_size);

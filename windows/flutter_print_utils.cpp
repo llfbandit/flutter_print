@@ -77,9 +77,6 @@ bool IsPdfFile(const std::wstring& path) {
 // ---------------------------------------------------------------------------
 
 int NameToDMPaper(const std::string& name) {
-  if (name == "A0")        return DMPAPER_A0;
-  if (name == "A1")        return DMPAPER_A1;
-  if (name == "A2")        return DMPAPER_A2;
   if (name == "A3")        return DMPAPER_A3;
   if (name == "A4")        return DMPAPER_A4;
   if (name == "A5")        return DMPAPER_A5;
