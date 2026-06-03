@@ -1,3 +1,6 @@
+## 0.2.4
+* fix: WASM compilation.
+
 ## 0.2.3
 * fix: WASM compilation for pub.dev score.
 

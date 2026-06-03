@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'flutter_print_method_channel.dart'
-    if (dart.library.js_interop) 'flutter_print_method_channel_stub.dart';
+    if (dart.library.js_interop) 'web/flutter_print_method_channel_web.dart';
 import 'messages.g.dart';
 
 export 'messages.g.dart'
