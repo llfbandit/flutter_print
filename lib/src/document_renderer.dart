@@ -214,17 +214,18 @@ Future<ui.Image> _renderViaOverlay(
 
   Overlay.of(context).insert(entry);
 
-  // First frame: build + layout + initial paint.
-  // Second frame: picks up async image decodes that completed after frame 1.
-  await WidgetsBinding.instance.endOfFrame;
-  await WidgetsBinding.instance.endOfFrame;
+  try {
+    // First frame: build + layout + initial paint.
+    // Second frame: picks up async image decodes that completed after frame 1.
+    await WidgetsBinding.instance.endOfFrame;
+    await WidgetsBinding.instance.endOfFrame;
 
-  final boundary =
-      repaintKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-  final image = await boundary.toImage(pixelRatio: pixelRatio);
-
-  entry.remove();
-  return image;
+    final boundary =
+        repaintKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    return await boundary.toImage(pixelRatio: pixelRatio);
+  } finally {
+    if (entry.mounted) entry.remove();
+  }
 }
 
 // ---------------------------------------------------------------------------

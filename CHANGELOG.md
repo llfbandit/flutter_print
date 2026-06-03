@@ -1,5 +1,7 @@
 ## 0.2.4
 * fix: WASM compilation.
+* fix: Temp file deleted too early (race condition with preview/print dialog).
+* fix: Ensure OverlayEntry removal in case of rebuild for `printWidget` and `previewWidget`.
 
 ## 0.2.3
 * fix: WASM compilation for pub.dev score.

@@ -6,6 +6,9 @@ import 'flutter_print_platform_interface.dart';
 import 'messages.g.dart';
 
 class MethodChannelFlutterPrint extends FlutterPrintPlatform {
+  static const _fPrefix = 'flutter_print_';
+  static const _fExt = '.pdf';
+
   @visibleForTesting
   FlutterPrintApi api = FlutterPrintApi();
 
@@ -23,19 +26,20 @@ class MethodChannelFlutterPrint extends FlutterPrintPlatform {
     PrintOptions? options,
     bool directPrint = false,
   }) async {
+    // Clean up any previous files
+    _cleanupTempFiles();
+
     final file = File(
       '${Directory.systemTemp.path}${Platform.pathSeparator}'
-      'flutter_print_${DateTime.now().millisecondsSinceEpoch}.pdf',
+      '$_fPrefix${DateTime.now().millisecondsSinceEpoch}$_fExt',
     );
-    try {
-      await file.writeAsBytes(bytes, flush: true);
-      if (directPrint) {
-        await api.print(file.path, options ?? _defaults());
-      } else {
-        await api.printPreview(file.path, options ?? _defaults());
-      }
-    } finally {
-      if (file.existsSync()) await file.delete();
+
+    await file.writeAsBytes(bytes, flush: true);
+
+    if (directPrint) {
+      await api.print(file.path, options ?? _defaults());
+    } else {
+      await api.printPreview(file.path, options ?? _defaults());
     }
   }
 
@@ -47,4 +51,14 @@ class MethodChannelFlutterPrint extends FlutterPrintPlatform {
 
   static PrintOptions _defaults() =>
       PrintOptions(copies: 1, landscape: false, color: true);
+
+  void _cleanupTempFiles() {
+    try {
+      Directory.systemTemp
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.contains(_fPrefix) && f.path.endsWith(_fExt))
+          .forEach((f) => f.deleteSync());
+    } catch (_) {}
+  }
 }
