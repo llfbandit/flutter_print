@@ -1,49 +1,39 @@
-name: flutter_print
-description: "A Flutter plugin focusing on print, that's it. PDF, image, widget and other content."
-version: 0.2.4
-homepage: https://github.com/llfbandit/flutter_print
-
-topics: 
-  - print
-  - printing
-  - airprint
-  - pdf
+name: flutter_print_workspace
 
 environment:
   sdk: ^3.12.0
-  flutter: '>=3.44.0'
 
-dependencies:
-  flutter:
-    sdk: flutter
-  flutter_web_plugins:
-    sdk: flutter
-
-  meta: ^1.18.0
-  plugin_platform_interface: ^2.0.2
-  web: ^1.0.0
+publish_to: none
 
 dev_dependencies:
-  flutter_test:
-    sdk: flutter
+  melos: ^7.7.0
+  pigeon: ^27.1.0
 
-  flutter_lints: ^6.0.0
-  pigeon: ^26.3.4
+workspace:
+  - flutter_print
+  - flutter_print/example
+  - flutter_print_platform_interface
+  - flutter_print_web
+  - flutter_print_windows
 
-flutter:
-  plugin:
-    platforms:
-      android:
-        package: com.llfbandit.flutter_print
-        pluginClass: FlutterPrintPlugin
-      ios:
-        pluginClass: FlutterPrintPlugin
-      linux:
-        pluginClass: FlutterPrintPlugin
-      macos:
-        pluginClass: FlutterPrintPlugin
-      windows:
-        pluginClass: FlutterPrintPluginCApi
-      web:
-        pluginClass: FlutterPrintWeb
-        fileName: src/web/flutter_print_web.dart
+melos:
+  # Don't generate intellij files
+  ide:
+    intellij: false
+
+  command:
+    # When a dependency in a package is listed it will be replaced with the following versions.
+    bootstrap:
+      environment:
+        sdk: ^3.12.0
+        flutter: ">=3.44.0"
+      dependencies:
+        flutter_print_platform_interface: ^0.1.0
+      dev_dependencies:
+        # Linter rules (https://pub.dev/packages/flutter_lints)
+        flutter_lints: ^6.0.0
+
+  clean:
+    hooks:
+      # Runs "flutter clean" in all Flutter packages (`--flutter`) with concurrency
+      post: melos exec --flutter -c 1 -- "flutter clean"

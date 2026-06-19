@@ -1,0 +1,35 @@
+name: flutter_print_windows
+description: Windows implementation of the flutter_print plugin.
+version: 0.1.0
+homepage: https://github.com/llfbandit/flutter_print/tree/main/flutter_print_windows
+
+resolution: workspace
+
+topics:
+  - print
+  - printing
+  - windows
+
+environment:
+  sdk: ^3.12.0
+  flutter: '>=3.44.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  fluent_ui: ^4.9.0
+  flutter_print_platform_interface: ^0.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    implements: flutter_print
+    platforms:
+      windows:
+        pluginClass: FlutterPrintPluginCApi
+        dartPluginClass: FlutterPrintWindows

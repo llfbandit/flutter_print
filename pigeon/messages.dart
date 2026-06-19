@@ -1,28 +1,29 @@
 import 'package:pigeon/pigeon.dart';
 
-// Run generation (from the package root):
+// Run generation (from the workspace root, i.e. the directory containing this
+// pigeon/ folder):
 //
 //   dart run pigeon --input pigeon/messages.dart
 //
 // macOS shares the same generated Swift file as iOS. After running the command
 // above, copy the generated Swift file to the macOS source tree:
 //
-//   cp ios/flutter_print/Sources/flutter_print/Messages.swift \
-//      macos/flutter_print/Sources/flutter_print/Messages.swift
+//   cp flutter_print/ios/flutter_print/Sources/flutter_print/Messages.swift \
+//      flutter_print/macos/flutter_print/Sources/flutter_print/Messages.swift
 
 @ConfigurePigeon(
   PigeonOptions(
-    dartOut: 'lib/src/messages.g.dart',
+    dartOut: 'flutter_print_platform_interface/lib/src/messages.g.dart',
     dartOptions: DartOptions(),
-    javaOut: 'android/src/main/java/com/llfbandit/flutter_print/Messages.java',
+    javaOut: 'flutter_print/android/src/main/java/com/llfbandit/flutter_print/Messages.java',
     javaOptions: JavaOptions(package: 'com.llfbandit.flutter_print'),
-    swiftOut: 'ios/flutter_print/Sources/flutter_print/Messages.swift',
+    swiftOut: 'flutter_print/ios/flutter_print/Sources/flutter_print/Messages.swift',
     swiftOptions: SwiftOptions(),
-    gobjectHeaderOut: 'linux/messages.h',
-    gobjectSourceOut: 'linux/messages.cc',
+    gobjectHeaderOut: 'flutter_print/linux/messages.h',
+    gobjectSourceOut: 'flutter_print/linux/messages.cc',
     gobjectOptions: GObjectOptions(module: 'FlutterPrint'),
-    cppHeaderOut: 'windows/messages.h',
-    cppSourceOut: 'windows/messages.cpp',
+    cppHeaderOut: 'flutter_print_windows/windows/messages.h',
+    cppSourceOut: 'flutter_print_windows/windows/messages.cpp',
     cppOptions: CppOptions(namespace: 'flutter_print'),
   ),
 )
@@ -39,6 +40,22 @@ enum DuplexMode {
 
   /// Double-sided, flip along the short edge (landscape binding).
   shortEdge,
+}
+
+/// Color printing capability of a printer.
+enum ColorCapability {
+  /// Color capability could not be determined.
+  unknown,
+
+  /// Physical color printer — the user can choose between color and grayscale.
+  supported,
+
+  /// Monochrome-only printer — always prints in grayscale; the toggle is hidden.
+  monochrome,
+
+  /// Virtual/software printer (e.g. PDF, XPS, OneNote) — always outputs in
+  /// color; the toggle is hidden and color mode is enforced.
+  enforced,
 }
 
 // ---------------------------------------------------------------------------
@@ -151,14 +168,14 @@ class PrintOptions {
 /// Fields may be `null` when the platform does not provide that information.
 class PrinterCapabilities {
   const PrinterCapabilities({
-    this.supportsColor,
+    required this.colorCapability,
     this.supportsDuplex,
     this.maxCopies,
     required this.supportedPageSizes,
   });
 
-  /// Whether the printer can print in colour. `null` if unknown.
-  final bool? supportsColor;
+  /// Color printing capability of this printer.
+  final ColorCapability colorCapability;
 
   /// Whether the printer supports duplex (double-sided) printing. `null` if
   /// unknown.
@@ -170,7 +187,7 @@ class PrinterCapabilities {
 
   /// Well-known page-size names accepted by this printer (e.g. `'A4'`,
   /// `'Letter'`). Empty when the platform does not report supported sizes.
-  final List<String?> supportedPageSizes;
+  final List<String> supportedPageSizes;
 }
 
 /// Describes a single printer returned by [FlutterPrintApi.listPrinters].
@@ -178,7 +195,7 @@ class PrinterInfo {
   const PrinterInfo({
     required this.label,
     this.address,
-    this.description,
+    this.details,
     required this.isDefault,
     required this.capabilities,
     this.isAvailable,
@@ -202,7 +219,7 @@ class PrinterInfo {
 
   /// Optional longer description provided by the platform (e.g. the printer
   /// model or location). May be `null`.
-  final String? description;
+  final String? details;
 
   /// Whether this is the current system-default printer.
   final bool isDefault;
@@ -252,7 +269,7 @@ abstract class FlutterPrintApi {
   ///
   /// Throws a [PlatformException] if the file is not found, the file type is
   /// unsupported, or the print subsystem reports an error.
-  void print(String filePath, PrintOptions options);
+  void print(String filePath, {PrintOptions? options});
 
   /// Opens the native print-preview or print dialog for [filePath].
   ///
@@ -270,7 +287,7 @@ abstract class FlutterPrintApi {
   /// printing to the default document viewer.
   ///
   /// Throws a [PlatformException] if the file is not found.
-  void printPreview(String filePath, PrintOptions options);
+  void printPreview(String filePath, {PrintOptions? options});
 
   /// Returns all printers currently available on this device.
   ///

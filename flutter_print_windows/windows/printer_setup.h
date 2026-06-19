@@ -1,0 +1,40 @@
+#pragma once
+
+#define NOMINMAX
+#include <windows.h>
+#include <winspool.h>
+
+#include <string>
+
+#include "messages.h"
+
+namespace flutter_print {
+
+// ---------------------------------------------------------------------------
+// Paper names
+// ---------------------------------------------------------------------------
+
+// Maps a well-known paper-size name (e.g. "A4", "Letter") to its DMPAPER_*
+// constant. Returns 0 for unrecognised names.
+int NameToDMPaper(const std::string& name);
+
+// ---------------------------------------------------------------------------
+// DEVMODE
+// ---------------------------------------------------------------------------
+
+// Writes |options| into an existing DEVMODE in-place.
+void ApplyOptionsToDEVMODE(DEVMODE* dm, const PrintOptions& options);
+
+// Returns a GlobalAlloc'd DEVMODE initialised from the printer's native
+// settings with |options| overlaid. Caller must GlobalFree the handle.
+HGLOBAL BuildDevMode(const std::wstring& printerName, const PrintOptions& options);
+
+// ---------------------------------------------------------------------------
+// Printer DC
+// ---------------------------------------------------------------------------
+
+// Creates a printer DC for |printerName| with |options| applied.
+// Caller must DeleteDC the returned handle.
+HDC CreatePrinterDC(const std::wstring& printerName, const PrintOptions& options);
+
+}  // namespace flutter_print
