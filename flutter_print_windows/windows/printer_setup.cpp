@@ -1,6 +1,7 @@
 #include "printer_setup.h"
 
 #include <algorithm>
+#include <optional>
 
 #pragma comment(lib, "winspool.lib")
 
@@ -130,6 +131,81 @@ HDC CreatePrinterDC(const std::wstring& printerName,
   if (dm) GlobalUnlock(h);
   if (h)  GlobalFree(h);
   return hdc;
+}
+
+// ---------------------------------------------------------------------------
+// Hardware margins
+// ---------------------------------------------------------------------------
+
+std::optional<PrinterMargins> GetMinimumMargins(const std::wstring& printerName,
+                                                const std::string& paperSizeName,
+                                                double paperWidthMm,
+                                                double paperHeightMm) {
+  HANDLE hPrinter = nullptr;
+  if (!OpenPrinterW(const_cast<LPWSTR>(printerName.c_str()), &hPrinter, nullptr))
+    return std::nullopt;
+
+  const LONG sz = DocumentPropertiesW(
+      nullptr, hPrinter, const_cast<LPWSTR>(printerName.c_str()),
+      nullptr, nullptr, 0);
+  if (sz <= 0) { ClosePrinter(hPrinter); return std::nullopt; }
+
+  std::vector<BYTE> dmBuf(static_cast<size_t>(sz));
+  auto* dm = reinterpret_cast<DEVMODE*>(dmBuf.data());
+  if (DocumentPropertiesW(nullptr, hPrinter,
+                           const_cast<LPWSTR>(printerName.c_str()),
+                           dm, nullptr, DM_OUT_BUFFER) != IDOK) {
+    ClosePrinter(hPrinter);
+    return std::nullopt;
+  }
+
+  // Apply paper size.
+  dm->dmFields &= ~(DM_PAPERSIZE | DM_PAPERWIDTH | DM_PAPERLENGTH);
+  const int paper = NameToDMPaper(paperSizeName);
+  if (paper > 0) {
+    dm->dmPaperSize = static_cast<short>(paper);
+    dm->dmFields   |= DM_PAPERSIZE;
+  } else if (paperWidthMm > 0 && paperHeightMm > 0) {
+    const double shortEdge = std::min(paperWidthMm, paperHeightMm);
+    const double longEdge  = std::max(paperWidthMm, paperHeightMm);
+    dm->dmPaperSize   = DMPAPER_USER;
+    dm->dmPaperWidth  = static_cast<short>(std::round(shortEdge * 10.0));
+    dm->dmPaperLength = static_cast<short>(std::round(longEdge  * 10.0));
+    dm->dmFields     |= DM_PAPERSIZE | DM_PAPERWIDTH | DM_PAPERLENGTH;
+    dm->dmOrientation = (paperWidthMm > paperHeightMm) ? DMORIENT_LANDSCAPE
+                                                        : DMORIENT_PORTRAIT;
+  }
+  // Validate paper size with the driver before creating the DC.
+  DocumentPropertiesW(nullptr, hPrinter,
+                       const_cast<LPWSTR>(printerName.c_str()),
+                       dm, dm, DM_IN_BUFFER | DM_OUT_BUFFER);
+  ClosePrinter(hPrinter);
+
+  HDC hdc = CreateDCW(L"WINSPOOL", printerName.c_str(), nullptr, dm);
+  if (!hdc) return std::nullopt;
+
+  // PHYSICALOFFSET* gives the top-left unprintable corner in device units.
+  // PHYSICALWIDTH/HEIGHT is the full sheet; HORZRES/VERTRES is the printable
+  // area. Right/bottom margin = sheet - printable - top-left offset.
+  const int offX  = GetDeviceCaps(hdc, PHYSICALOFFSETX);
+  const int offY  = GetDeviceCaps(hdc, PHYSICALOFFSETY);
+  const int physW = GetDeviceCaps(hdc, PHYSICALWIDTH);
+  const int physH = GetDeviceCaps(hdc, PHYSICALHEIGHT);
+  const int rezW  = GetDeviceCaps(hdc, HORZRES);
+  const int rezH  = GetDeviceCaps(hdc, VERTRES);
+  const int dpiX  = GetDeviceCaps(hdc, LOGPIXELSX);
+  const int dpiY  = GetDeviceCaps(hdc, LOGPIXELSY);
+  DeleteDC(hdc);
+
+  if (dpiX <= 0 || dpiY <= 0) return std::nullopt;
+
+  const double kInchToMm = 25.4;
+  PrinterMargins m;
+  m.left   = (offX / static_cast<double>(dpiX)) * kInchToMm;
+  m.top    = (offY / static_cast<double>(dpiY)) * kInchToMm;
+  m.right  = ((physW - rezW - offX) / static_cast<double>(dpiX)) * kInchToMm;
+  m.bottom = ((physH - rezH - offY) / static_cast<double>(dpiY)) * kInchToMm;
+  return m;
 }
 
 }  // namespace flutter_print

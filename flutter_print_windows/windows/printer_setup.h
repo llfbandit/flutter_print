@@ -37,4 +37,24 @@ HGLOBAL BuildDevMode(const std::wstring& printerName, const PrintOptions& option
 // Caller must DeleteDC the returned handle.
 HDC CreatePrinterDC(const std::wstring& printerName, const PrintOptions& options);
 
+// ---------------------------------------------------------------------------
+// Hardware margins
+// ---------------------------------------------------------------------------
+
+struct PrinterMargins {
+  double left;
+  double top;
+  double right;
+  double bottom;
+};
+
+// Returns the hardware (unprintable-area) margins in mm for |printerName|
+// with the given paper size. |paperSizeName| is a well-known name (e.g.
+// "A4"); if empty, |paperWidthMm| and |paperHeightMm| are used for a custom
+// size. Returns nullopt when the printer DC cannot be created.
+std::optional<PrinterMargins> GetMinimumMargins(const std::wstring& printerName,
+                                                const std::string& paperSizeName,
+                                                double paperWidthMm,
+                                                double paperHeightMm);
+
 }  // namespace flutter_print

@@ -49,6 +49,7 @@ class FlutterPrintPlugin : public flutter::Plugin, public FlutterPrintApi {
   void HandleGetPdfPageCount(const flutter::EncodableMap& args, WinResult result);
   void HandleRenderPdfPageToPng(const flutter::EncodableMap& args, WinResult result);
   void HandleDecodeTextFile(const flutter::EncodableMap& args, WinResult result);
+  void HandleGetMinimumMargins(const flutter::EncodableMap& args, WinResult result);
 
   HWND hwnd_;
   std::shared_ptr<std::atomic<bool>> alive_;

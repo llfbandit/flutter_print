@@ -308,6 +308,7 @@ void FlutterPrintPlugin::HandleWindowsMethod(const flutter::MethodCall<flutter::
   if (method == "getPdfPageCount")    return HandleGetPdfPageCount(*args, std::move(result));
   if (method == "renderPdfPageToPng") return HandleRenderPdfPageToPng(*args, std::move(result));
   if (method == "decodeTextFile")     return HandleDecodeTextFile(*args, std::move(result));
+  if (method == "getMinimumMargins")  return HandleGetMinimumMargins(*args, std::move(result));
   result->NotImplemented();
 }
 
@@ -365,6 +366,41 @@ void FlutterPrintPlugin::HandleDecodeTextFile(const flutter::EncodableMap& args,
     const std::wstring text = ReadTextFile(wPath);
     if (!alive->load()) return;
     result->Success(flutter::EncodableValue(WideToUtf8(text.c_str())));
+  }).detach();
+}
+
+void FlutterPrintPlugin::HandleGetMinimumMargins(const flutter::EncodableMap& args, WinResult result) {
+  auto it = args.find(flutter::EncodableValue("printerName"));
+  if (it == args.end()) {
+    result->Error("INVALID_ARGS", "Missing printerName");
+    return;
+  }
+  const std::wstring wPrinter = Utf8ToWide(std::get<std::string>(it->second));
+
+  std::string paperSizeName;
+  if (auto jt = args.find(flutter::EncodableValue("paperSizeName")); jt != args.end()) {
+    if (auto* s = std::get_if<std::string>(&jt->second)) paperSizeName = *s;
+  }
+  double paperWidthMm = 0.0;
+  if (auto jt = args.find(flutter::EncodableValue("paperWidth")); jt != args.end()) {
+    if (auto* d = std::get_if<double>(&jt->second)) paperWidthMm = *d;
+  }
+  double paperHeightMm = 0.0;
+  if (auto jt = args.find(flutter::EncodableValue("paperHeight")); jt != args.end()) {
+    if (auto* d = std::get_if<double>(&jt->second)) paperHeightMm = *d;
+  }
+
+  std::thread([result = std::move(result), wPrinter, paperSizeName,
+               paperWidthMm, paperHeightMm, alive = alive_]() mutable {
+    auto m = GetMinimumMargins(wPrinter, paperSizeName, paperWidthMm, paperHeightMm);
+    if (!alive->load()) return;
+    if (!m) { result->Success(flutter::EncodableValue()); return; }
+    result->Success(flutter::EncodableValue(flutter::EncodableMap{
+        {flutter::EncodableValue("left"),   flutter::EncodableValue(m->left)},
+        {flutter::EncodableValue("top"),    flutter::EncodableValue(m->top)},
+        {flutter::EncodableValue("right"),  flutter::EncodableValue(m->right)},
+        {flutter::EncodableValue("bottom"), flutter::EncodableValue(m->bottom)},
+    }));
   }).detach();
 }
 

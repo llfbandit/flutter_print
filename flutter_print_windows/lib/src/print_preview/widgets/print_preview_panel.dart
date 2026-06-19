@@ -37,11 +37,13 @@ class PrintPreviewPanel extends StatefulWidget {
 
 class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
   String? _mimeType;
+  PageMargins? _minimumMargins;
 
   @override
   void initState() {
     super.initState();
     _loadMimeType();
+    _fetchMinimumMargins();
   }
 
   @override
@@ -51,6 +53,11 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
       setState(() => _mimeType = null);
       _loadMimeType();
     }
+    if (old.options.printerAddress != widget.options.printerAddress ||
+        old.options.pageSize != widget.options.pageSize ||
+        old.options.landscape != widget.options.landscape) {
+      _fetchMinimumMargins();
+    }
   }
 
   Future<void> _loadMimeType() async {
@@ -58,18 +65,43 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
     if (mounted) setState(() => _mimeType = mime);
   }
 
+  Future<void> _fetchMinimumMargins() async {
+    final printer = widget.options.printerAddress;
+    if (printer == null || printer.isEmpty) {
+      if (mounted) setState(() => _minimumMargins = null);
+      return;
+    }
+    final pageSize = widget.options.pageSize;
+    final w = pageSize?.width ?? 210.0;
+    final h = pageSize?.height ?? 297.0;
+    final landscape = widget.options.landscape;
+    final margins = await WindowsPrintChannel.getMinimumMargins(
+      printerName: printer,
+      paperSizeName: pageSize?.name,
+      paperWidth: landscape ? h : w,
+      paperHeight: landscape ? w : h,
+    );
+    if (mounted) setState(() => _minimumMargins = margins);
+  }
+
   @override
   Widget build(BuildContext context) {
     final mime = _mimeType;
     final double w = widget.options.pageSize?.width ?? 210.0;
     final double h = widget.options.pageSize?.height ?? 297.0;
-    final double paperAspect = widget.options.landscape ? h / w : w / h;
+    final bool landscape = widget.options.landscape;
+    final double paperW = landscape ? h : w;
+    final double paperH = landscape ? w : h;
+    final double paperAspect = paperW / paperH;
 
     if (mime == null) {
       return Column(
         children: [
           _PaperShell(
             paperAspect: paperAspect,
+            paperWidthMm: paperW,
+            paperHeightMm: paperH,
+            minimumMargins: _minimumMargins,
             child: const Center(child: ProgressRing()),
           ),
         ],
@@ -80,6 +112,9 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
       return _PrintPdfPreview(
         filePath: widget.filePath,
         paperAspect: paperAspect,
+        paperWidthMm: paperW,
+        paperHeightMm: paperH,
+        minimumMargins: _minimumMargins,
         color: widget.options.color,
       );
     }
@@ -88,6 +123,9 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
       return _PrintImagePreview(
         filePath: widget.filePath,
         paperAspect: paperAspect,
+        paperWidthMm: paperW,
+        paperHeightMm: paperH,
+        minimumMargins: _minimumMargins,
         color: widget.options.color,
       );
     }
@@ -96,6 +134,9 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
       return _PrintTextPreview(
         filePath: widget.filePath,
         paperAspect: paperAspect,
+        paperWidthMm: paperW,
+        paperHeightMm: paperH,
+        minimumMargins: _minimumMargins,
       );
     }
 
@@ -108,14 +149,24 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
 // ---------------------------------------------------------------------------
 
 class _PaperShell extends StatelessWidget {
-  const _PaperShell({required this.paperAspect, required this.child});
+  const _PaperShell({
+    required this.paperAspect,
+    required this.child,
+    this.paperWidthMm = 210.0,
+    this.paperHeightMm = 297.0,
+    this.minimumMargins,
+  });
 
   final double paperAspect;
   final Widget child;
+  final double paperWidthMm;
+  final double paperHeightMm;
+  final PageMargins? minimumMargins;
 
   @override
   Widget build(BuildContext context) {
     final theme = FluentTheme.of(context);
+    final margins = minimumMargins;
     return Expanded(
       child: Center(
         child: AspectRatio(
@@ -126,11 +177,41 @@ class _PaperShell extends StatelessWidget {
               border: Border.all(color: theme.resources.cardStrokeColorDefault),
               borderRadius: BorderRadius.circular(4),
             ),
-            padding: const EdgeInsets.all(12),
-            child: child,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Padding(
+                      padding: _getContentPadding(constraints, margins),
+                      child: child,
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  EdgeInsets _getContentPadding(
+    BoxConstraints constraints,
+    PageMargins? margins,
+  ) {
+    if (margins == null) {
+      return EdgeInsets.zero;
+    }
+
+    final pw = constraints.maxWidth;
+    final ph = constraints.maxHeight;
+
+    return EdgeInsets.fromLTRB(
+      (margins.left / paperWidthMm) * pw,
+      (margins.top / paperHeightMm) * ph,
+      (margins.right / paperWidthMm) * pw,
+      (margins.bottom / paperHeightMm) * ph,
     );
   }
 }
@@ -143,11 +224,17 @@ class _PrintPdfPreview extends StatefulWidget {
   const _PrintPdfPreview({
     required this.filePath,
     required this.paperAspect,
+    required this.paperWidthMm,
+    required this.paperHeightMm,
+    required this.minimumMargins,
     required this.color,
   });
 
   final String filePath;
   final double paperAspect;
+  final double paperWidthMm;
+  final double paperHeightMm;
+  final PageMargins? minimumMargins;
   final bool color;
 
   @override
@@ -230,6 +317,9 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
       children: [
         _PaperShell(
           paperAspect: widget.paperAspect,
+          paperWidthMm: widget.paperWidthMm,
+          paperHeightMm: widget.paperHeightMm,
+          minimumMargins: widget.minimumMargins,
           child: _buildContent(context),
         ),
         if (_pageCount > 1)
@@ -269,11 +359,17 @@ class _PrintImagePreview extends StatelessWidget {
   const _PrintImagePreview({
     required this.filePath,
     required this.paperAspect,
+    required this.paperWidthMm,
+    required this.paperHeightMm,
+    required this.minimumMargins,
     required this.color,
   });
 
   final String filePath;
   final double paperAspect;
+  final double paperWidthMm;
+  final double paperHeightMm;
+  final PageMargins? minimumMargins;
   final bool color;
 
   @override
@@ -286,7 +382,15 @@ class _PrintImagePreview extends StatelessWidget {
     );
     if (!color) img = ColorFiltered(colorFilter: _grayscaleFilter, child: img);
     return Column(
-      children: [_PaperShell(paperAspect: paperAspect, child: img)],
+      children: [
+        _PaperShell(
+          paperAspect: paperAspect,
+          paperWidthMm: paperWidthMm,
+          paperHeightMm: paperHeightMm,
+          minimumMargins: minimumMargins,
+          child: img,
+        ),
+      ],
     );
   }
 }
@@ -296,10 +400,19 @@ class _PrintImagePreview extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _PrintTextPreview extends StatefulWidget {
-  const _PrintTextPreview({required this.filePath, required this.paperAspect});
+  const _PrintTextPreview({
+    required this.filePath,
+    required this.paperAspect,
+    required this.paperWidthMm,
+    required this.paperHeightMm,
+    required this.minimumMargins,
+  });
 
   final String filePath;
   final double paperAspect;
+  final double paperWidthMm;
+  final double paperHeightMm;
+  final PageMargins? minimumMargins;
 
   @override
   State<_PrintTextPreview> createState() => _PrintTextPreviewState();
@@ -382,7 +495,15 @@ class _PrintTextPreviewState extends State<_PrintTextPreview> {
     }
 
     return Column(
-      children: [_PaperShell(paperAspect: widget.paperAspect, child: child)],
+      children: [
+        _PaperShell(
+          paperAspect: widget.paperAspect,
+          paperWidthMm: widget.paperWidthMm,
+          paperHeightMm: widget.paperHeightMm,
+          minimumMargins: widget.minimumMargins,
+          child: child,
+        ),
+      ],
     );
   }
 }
