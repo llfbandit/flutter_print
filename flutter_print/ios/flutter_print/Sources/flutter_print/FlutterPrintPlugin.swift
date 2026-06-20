@@ -11,11 +11,11 @@ public class FlutterPrintPlugin: NSObject, FlutterPlugin {
 // MARK: - FlutterPrintApi
 
 extension FlutterPrintPlugin: FlutterPrintApi {
-  func print(filePath: String, options: PrintOptions) throws {
+  func print(filePath: String, options: PrintOptions?) throws {
     try handlePrint(filePath: filePath, options: options, showPreview: false)
   }
 
-  func printPreview(filePath: String, options: PrintOptions) throws {
+  func printPreview(filePath: String, options: PrintOptions?) throws {
     try handlePrint(filePath: filePath, options: options, showPreview: true)
   }
 
@@ -43,7 +43,7 @@ extension FlutterPrintPlugin: FlutterPrintApi {
           address: printer.url.absoluteString,
           isDefault: false,
           capabilities: PrinterCapabilities(
-            supportsColor: nil,
+            colorCapability: .unknown,
             supportsDuplex: nil,
             maxCopies: nil,
             supportedPageSizes: []
@@ -64,7 +64,7 @@ extension FlutterPrintPlugin: FlutterPrintApi {
 // MARK: - Private
 
 private extension FlutterPrintPlugin {
-  func handlePrint(filePath: String, options: PrintOptions, showPreview: Bool) throws {
+  func handlePrint(filePath: String, options: PrintOptions?, showPreview: Bool) throws {
     let fileURL = URL(fileURLWithPath: filePath)
 
     guard FileManager.default.fileExists(atPath: filePath) else {
@@ -81,9 +81,9 @@ private extension FlutterPrintPlugin {
 
     let printInfo = UIPrintInfo(dictionary: nil)
     printInfo.jobName = fileURL.lastPathComponent
-    printInfo.outputType = options.color ? .general : .grayscale
-    printInfo.orientation = (options.landscape == true) ? .landscape : .portrait
-    if let duplex = options.duplexMode {
+    printInfo.outputType = (options?.color ?? true) ? .general : .grayscale
+    printInfo.orientation = (options?.landscape == true) ? .landscape : .portrait
+    if let duplex = options?.duplexMode {
       switch duplex {
       case .none:      printInfo.duplex = .none
       case .longEdge:  printInfo.duplex = .longEdge
@@ -100,7 +100,7 @@ private extension FlutterPrintPlugin {
 
       // If a printer URL string is provided, print directly without UI.
       if !showPreview,
-         let urlString = options.printerAddress,
+         let urlString = options?.printerAddress,
          let printerURL = URL(string: urlString)
       {
         let printer = UIPrinter(url: printerURL)
