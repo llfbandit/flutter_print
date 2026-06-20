@@ -38,6 +38,7 @@ static void flutter_print_plugin_class_init(FlutterPrintPluginClass* klass) {
 static void flutter_print_plugin_init(FlutterPrintPlugin* self) {}
 
 
+#ifdef HAS_CUPS
 // Returns true for formats CUPS typically cannot rasterise natively.
 static bool needs_transcode(const char* path) {
   const char* dot = strrchr(path, '.');
@@ -74,6 +75,7 @@ static gchar* transcode_to_png(const char* path) {
   g_object_unref(pixbuf);
   return tmp;
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Print / PrintPreview
@@ -125,11 +127,11 @@ static FlutterPrintFlutterPrintApiPrintResponse* handle_print(
   if (duplex_mode) {
     const char* sides = nullptr;
     switch (*duplex_mode) {
-      case FLUTTER_PRINT_DUPLEX_MODE_NONE:
+      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_NONE:
         sides = "one-sided";            break;
-      case FLUTTER_PRINT_DUPLEX_MODE_LONG_EDGE:
+      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_LONG_EDGE:
         sides = "two-sided-long-edge";  break;
-      case FLUTTER_PRINT_DUPLEX_MODE_SHORT_EDGE:
+      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_SHORT_EDGE:
         sides = "two-sided-short-edge"; break;
     }
     if (sides)
@@ -193,11 +195,11 @@ static FlutterPrintFlutterPrintApiPrintResponse* handle_print(
   const char* sides = nullptr;
   if (duplex_mode) {
     switch (*duplex_mode) {
-      case FLUTTER_PRINT_DUPLEX_MODE_NONE:
+      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_NONE:
         sides = "one-sided";            break;
-      case FLUTTER_PRINT_DUPLEX_MODE_LONG_EDGE:
+      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_LONG_EDGE:
         sides = "two-sided-long-edge";  break;
-      case FLUTTER_PRINT_DUPLEX_MODE_SHORT_EDGE:
+      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_SHORT_EDGE:
         sides = "two-sided-short-edge"; break;
     }
   }
@@ -266,6 +268,7 @@ static FlutterPrintFlutterPrintApiPrintPreviewResponse* handle_print_preview(
 // ListPrinters
 // ---------------------------------------------------------------------------
 
+#ifdef HAS_CUPS
 typedef struct {
   FlutterPrintFlutterPrintApiResponseHandle* response_handle;
   FlValue* result_list;
@@ -284,7 +287,6 @@ static gpointer list_printers_worker(gpointer user_data) {
   ListPrintersReply* reply = static_cast<ListPrintersReply*>(user_data);
   FlValue* list = fl_value_new_list();
 
-#ifdef HAS_CUPS
   cups_dest_t* dests = nullptr;
   int num_dests = cupsGetDests(&dests);
 
@@ -300,15 +302,16 @@ static gpointer list_printers_worker(gpointer user_data) {
     // address: CUPS queue name — what gets passed to cupsPrintFile / lp -d.
     const gchar* address = dests[i].name;
 
-    // supportsColor
-    gboolean color_val = FALSE;
-    gboolean* color_ptr = nullptr;
+    // colorCapability
+    FlutterPrintColorCapability color_capability =
+        FLUTTER_PRINT_PLATFORM_INTERFACE_COLOR_CAPABILITY_UNKNOWN;
     const char* color_str = cupsGetOption("color-supported",
                                            dests[i].num_options,
                                            dests[i].options);
     if (color_str) {
-      color_val = (strcmp(color_str, "true") == 0);
-      color_ptr = &color_val;
+      color_capability = (strcmp(color_str, "true") == 0)
+          ? FLUTTER_PRINT_PLATFORM_INTERFACE_COLOR_CAPABILITY_SUPPORTED
+          : FLUTTER_PRINT_PLATFORM_INTERFACE_COLOR_CAPABILITY_MONOCHROME;
     }
 
     // supportsDuplex: check sides-supported attribute.
@@ -326,7 +329,7 @@ static gpointer list_printers_worker(gpointer user_data) {
     // serialises it as a positional list the Dart decoder expects.
     FlValue* page_sizes = fl_value_new_list();
     g_autoptr(FlutterPrintPrinterCapabilities) caps =
-        flutter_print_printer_capabilities_new(color_ptr, duplex_ptr,
+        flutter_print_printer_capabilities_new(color_capability, duplex_ptr,
                                                nullptr, page_sizes);
     fl_value_unref(page_sizes);
 
@@ -354,12 +357,12 @@ static gpointer list_printers_worker(gpointer user_data) {
   }
 
   cupsFreeDests(num_dests, dests);
-#endif
 
   reply->result_list = list;
   g_idle_add(list_printers_respond_idle, reply);
   return nullptr;
 }
+#endif  // HAS_CUPS
 
 static void handle_pick_printer(
     FlutterPrintFlutterPrintApiResponseHandle* response_handle,
@@ -370,9 +373,15 @@ static void handle_pick_printer(
 static void handle_list_printers(
     FlutterPrintFlutterPrintApiResponseHandle* response_handle,
     gpointer user_data) {
+#ifdef HAS_CUPS
   ListPrintersReply* reply = g_new0(ListPrintersReply, 1);
   reply->response_handle = response_handle;
   g_thread_new("flutter_print_list_printers", list_printers_worker, reply);
+#else
+  FlValue* list = fl_value_new_list();
+  flutter_print_flutter_print_api_respond_list_printers(response_handle, list);
+  fl_value_unref(list);
+#endif
 }
 
 // ---------------------------------------------------------------------------
