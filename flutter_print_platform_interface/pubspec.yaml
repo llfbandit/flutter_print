@@ -8,7 +8,6 @@ resolution: workspace
 topics:
   - print
   - printing
-  - plugin-interface
 
 environment:
   sdk: ^3.12.0

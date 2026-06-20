@@ -1,5 +1,3 @@
-# record web
+# flutter_print_web
 
-Web specific implementation for record package called by record_platform_interface.
-
-When sample rate is not supported natively, the package resamples the buffers in audio thread.
+Web platform implementation of [flutter_print](https://pub.dev/packages/flutter_print) plugin.

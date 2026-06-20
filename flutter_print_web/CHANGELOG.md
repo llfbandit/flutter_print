@@ -1,2 +1,2 @@
-## 1.0.0
-* chore: Initial stable release.
+## 0.1.0
+* chore: Initial release.
