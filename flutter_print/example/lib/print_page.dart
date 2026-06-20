@@ -260,7 +260,7 @@ class _PrintPageState extends State<PrintPage> {
                 children: [
                   _radio('PDF', _Source.pdf),
                   _radio('Image', _Source.image),
-                  _radio('Other', _Source.text),
+                  _radio('Text', _Source.text),
                   _radio('Widget', _Source.widget),
                 ],
               ),
