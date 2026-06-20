@@ -137,8 +137,9 @@ gchar* flutter_print_page_size_to_string(FlutterPrintPageSize* object);
  *
  * Per-side page margins expressed in millimetres.
  *
- * **iOS / Windows** — ignored; margins are controlled by the system dialog
- *   or the application that handles the print verb.
+ * **iOS** — ignored; margins are controlled by the system print dialog.
+ * **Windows** — ignored; the printable area is determined by the printer's
+ *   hardware (hardware margins are exposed via `getMinimumMargins`).
  */
 
 G_DECLARE_FINAL_TYPE(FlutterPrintPageMargins, flutter_print_page_margins, FLUTTER_PRINT, PAGE_MARGINS, GObject)
@@ -265,9 +266,6 @@ FlutterPrintPrintOptions* flutter_print_print_options_new(const gchar* printer_a
  * - **iOS** — must be a full AirPrint URL (e.g.
  *   `'ipp://printer.local/ipp/print'`). When provided the job is sent
  *   directly without showing a dialog.
- * - **macOS / Windows** — the printer display name (same as
- *   [PrinterInfo.label] on these platforms).
- * - **Linux** — the CUPS destination/queue name.
  *
  * Returns: the field value.
  */
@@ -280,8 +278,7 @@ const gchar* flutter_print_print_options_get_printer_address(FlutterPrintPrintOp
  * Desired output page size.
  *
  * Platform support: Android, macOS, Linux (named sizes only), Windows
- * (passed to the associated application via the shell print verb, actual
- * support depends on the application).
+ * (PDF, image, and text files).
  *
  * Returns: the field value.
  */
@@ -305,7 +302,7 @@ FlutterPrintPageMargins* flutter_print_print_options_get_margins(FlutterPrintPri
  *
  * Number of copies to print. Must be ≥ 1.
  *
- * Ignored on iOS and Windows (controlled by the system dialog).
+ * Ignored on iOS (controlled by the system dialog).
  *
  * Returns: the field value.
  */
@@ -339,7 +336,7 @@ gboolean flutter_print_print_options_get_color(FlutterPrintPrintOptions* object)
  *
  * When `null` the platform default is used (typically single-sided).
  * Ignored on iOS (controlled by the system dialog) and on Windows for
- * non-image/non-PDF files delegated via ShellExecuteW.
+ * unknown file types.
  *
  * Returns: the field value.
  */
@@ -517,9 +514,6 @@ const gchar* flutter_print_printer_info_get_label(FlutterPrintPrinterInfo* objec
  *
  * Platform notes:
  * - **iOS** — full AirPrint URL (e.g. `'ipp://printer.local/ipp/print'`).
- * - **macOS / Windows** — same as [label]; the display name is the system
- *   identifier on these platforms.
- * - **Linux** — CUPS destination/queue name (e.g. `'HP_LaserJet_Pro'`).
  * - **Android** — not set; the user selects the printer inside the dialog.
  *
  * Returns: the field value.

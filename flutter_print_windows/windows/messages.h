@@ -134,8 +134,9 @@ class PageSize {
 
 // Per-side page margins expressed in millimetres.
 //
-// **iOS / Windows** — ignored; margins are controlled by the system dialog
-//   or the application that handles the print verb.
+// **iOS** — ignored; margins are controlled by the system print dialog.
+// **Windows** — ignored; the printable area is determined by the printer's
+//   hardware (hardware margins are exposed via `getMinimumMargins`).
 //
 // Generated class from Pigeon that represents data sent in messages.
 class PageMargins {
@@ -218,9 +219,6 @@ class PrintOptions {
   // - **iOS** — must be a full AirPrint URL (e.g.
   //   `'ipp://printer.local/ipp/print'`). When provided the job is sent
   //   directly without showing a dialog.
-  // - **macOS / Windows** — the printer display name (same as
-  //   [PrinterInfo.label] on these platforms).
-  // - **Linux** — the CUPS destination/queue name.
   const std::string* printer_address() const;
   void set_printer_address(const std::string_view* value_arg);
   void set_printer_address(std::string_view value_arg);
@@ -228,8 +226,7 @@ class PrintOptions {
   // Desired output page size.
   //
   // Platform support: Android, macOS, Linux (named sizes only), Windows
-  // (passed to the associated application via the shell print verb, actual
-  // support depends on the application).
+  // (PDF, image, and text files).
   const PageSize* page_size() const;
   void set_page_size(const PageSize* value_arg);
   void set_page_size(const PageSize& value_arg);
@@ -243,7 +240,7 @@ class PrintOptions {
 
   // Number of copies to print. Must be ≥ 1.
   //
-  // Ignored on iOS and Windows (controlled by the system dialog).
+  // Ignored on iOS (controlled by the system dialog).
   int64_t copies() const;
   void set_copies(int64_t value_arg);
 
@@ -259,7 +256,7 @@ class PrintOptions {
   //
   // When `null` the platform default is used (typically single-sided).
   // Ignored on iOS (controlled by the system dialog) and on Windows for
-  // non-image/non-PDF files delegated via ShellExecuteW.
+  // unknown file types.
   const DuplexMode* duplex_mode() const;
   void set_duplex_mode(const DuplexMode* value_arg);
   void set_duplex_mode(const DuplexMode& value_arg);
@@ -380,9 +377,6 @@ class PrinterInfo {
   //
   // Platform notes:
   // - **iOS** — full AirPrint URL (e.g. `'ipp://printer.local/ipp/print'`).
-  // - **macOS / Windows** — same as [label]; the display name is the system
-  //   identifier on these platforms.
-  // - **Linux** — CUPS destination/queue name (e.g. `'HP_LaserJet_Pro'`).
   // - **Android** — not set; the user selects the printer inside the dialog.
   const std::string* address() const;
   void set_address(const std::string_view* value_arg);
@@ -467,16 +461,16 @@ class FlutterPrintApi {
   // universally accepted).
   //
   // **Android / iOS** — always opens the system print dialog (which includes
-  // a preview step). The [PrintOptions.printerName] field is ignored on
+  // a preview step). The [PrintOptions.printerAddress] field is ignored on
   // Android; on iOS it must be a full AirPrint URL to bypass the dialog.
   //
-  // **macOS** — uses `NSPrintOperation`. For PDF files the job is rendered
+  // **macOS** — For PDF files the job is rendered
   // page-by-page using PDFKit. Other file types are opened with the default
   // application instead.
   //
-  // **Windows** — delegates to `ShellExecuteW` with the `print` verb (or
-  // `printto` when [PrintOptions.printerName] is set). The associated
-  // application handles the actual rendering.
+  // **Windows** — PDF, image, and text files are rendered directly to the
+  // printer. Other file types are delegated; the
+  // associated application handles rendering and most options are ignored.
   //
   // **Linux** — submits the job via CUPS (`cupsPrintFile`). Falls back to
   // the `lp` command-line tool when CUPS is not available at build time.
@@ -491,12 +485,11 @@ class FlutterPrintApi {
   // **Android / iOS** — identical to [print]: the system print dialog always
   // includes a preview step on these platforms.
   //
-  // **macOS** — opens `NSPrintPanel` so the user can review and adjust
-  // settings before printing.
+  // **macOS** — opens the system print dialog so the user can review and
+  // adjust settings before printing.
   //
-  // **Windows** — opens the file in its default application (e.g. a PDF
-  // viewer) using `ShellExecuteW` with the `open` verb. The application's
-  // own print dialog is used for the final print step.
+  // **Windows** — opens a custom Flutter print dialog with a built-in
+  // preview for PDF, image, and text files.
   //
   // **Linux** — opens the file with `xdg-open`, delegating preview and
   // printing to the default document viewer.
@@ -507,20 +500,12 @@ class FlutterPrintApi {
     const PrintOptions* options) = 0;
   // Returns all printers currently available on this device.
   //
-  // **Android / iOS / Web** — always returns an empty list. Android's print
-  // framework only exposes printers inside an active `PrintService` context.
-  // iOS has no public AirPrint enumeration API; use [pickPrinter] instead.
+  // **Android / iOS / Web** — always returns an empty list.
   //
-  // The I/O is performed on a background thread on all platforms; the
-  // platform UI thread is never blocked.
+  // **iOS** - use [pickPrinter] instead.
   virtual void ListPrinters(std::function<void(ErrorOr<::flutter::EncodableList> reply)> result) = 0;
   // Shows a native AirPrint printer-picker UI and returns the selected
   // printer, or `null` if the user cancelled.
-  //
-  // **iOS only** — uses `UIPrinterPickerController`. The returned
-  // [PrinterInfo.name] is the full AirPrint URL (e.g.
-  // `ipp://MyPrinter.local./ipp/print`) suitable for use as
-  // [PrintOptions.printerName].
   //
   // Returns `null` on all other platforms.
   virtual void PickPrinter(std::function<void(ErrorOr<std::optional<PrinterInfo>> reply)> result) = 0;
