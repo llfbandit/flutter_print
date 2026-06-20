@@ -154,7 +154,7 @@ libraries. Install them before building the application:
 
 ```sh
 # Debian / Ubuntu
-sudo apt-get install libcups2-dev
+sudo apt install libcups2-dev
 
 # Fedora / RHEL / CentOS
 sudo dnf install cups-devel

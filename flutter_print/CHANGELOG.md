@@ -1,3 +1,8 @@
+## 0.3.1
+* fix(macos): Broken in 0.3.0. Syncs with new API.
+* fix(ios): Broken in 0.3.0. Syncs with new API.
+* fix(linux): Broken in 0.3.0. Syncs with new API.
+
 ## 0.3.0
 * chore: Partial federated structure. Split windows and web platforms.
 * feat(Windows): Add custom preview dialog with fluent_ui (there's no way for preview print on windows).
