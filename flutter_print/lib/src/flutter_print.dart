@@ -73,6 +73,15 @@ class FlutterPrint {
     await FlutterPrintPlatform.instance.print(path, options: options);
   }
 
+  /// Renders the widget returned by [builder] off-screen and opens the
+  /// platform print-preview or print dialog for the resulting PDF.
+  ///
+  /// Behaves like [printWidget] but passes the PDF through
+  /// [FlutterPrintPlatform.printPreview] instead of printing silently.
+  /// On platforms where the print dialog already includes a preview step
+  /// (Android, iOS), this is identical to [printWidget].
+  ///
+  /// [contentSize] works identically to [printWidget.contentSize].
   static Future<void> printWidgetPreview(
     WidgetBuilder builder, {
     required BuildContext context,
@@ -111,7 +120,7 @@ class FlutterPrint {
   ///   context: context,
   ///   options: PrintOptions(pageSize: PaperSizes.a4),
   /// );
-  /// // …
+  /// // ...
   /// Image.memory(png)
   /// ```
   ///
@@ -156,17 +165,7 @@ final class FlutterPrintIOS {
   ///
   /// The [PrinterInfo.address] of the returned printer is the full AirPrint
   /// URL (e.g. `ipp://MyPrinter.local./ipp/print`). Pass it as
-  /// [PrintOptions.printerAddress] to print directly to that printer:
-  ///
-  /// ```dart
-  /// final printer = await FlutterPrint.ios?.pickPrinter();
-  /// if (printer != null) {
-  ///   await FlutterPrint.print(
-  ///     '/path/to/doc.pdf',
-  ///     options: PrintOptions(printerAddress: printer.address, ...),
-  ///     directPrint: true,
-  ///   );
-  /// }
+  /// [PrintOptions.printerAddress] to print directly to that printer.
   /// ```
   Future<PrinterInfo?> pickPrinter() {
     return FlutterPrintPlatform.instance.pickPrinter();

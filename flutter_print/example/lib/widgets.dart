@@ -45,8 +45,8 @@ class CapabilitiesChips extends StatelessWidget {
             ),
             label: Text(switch (caps.colorCapability) {
               ColorCapability.monochrome => 'Grayscale',
-              ColorCapability.enforced   => 'Color (enforced)',
-              _                          => 'Color',
+              ColorCapability.enforced => 'Color (enforced)',
+              _ => 'Color',
             }),
             visualDensity: VisualDensity.compact,
           ),
@@ -74,123 +74,113 @@ class CapabilitiesChips extends StatelessWidget {
 class BusinessCard extends StatelessWidget {
   const BusinessCard({super.key});
 
+  // The renderer maps 1 logical pixel = 1 typographic point (72 pt/inch),
+  // so dimensions in logical pixels = mm × 72/25.4.
+
+  static const _radius = 9.0;
+  static const _pad = 8.0;
+  static const _imgSize = 55.0;
+  static const _imgGap = 9.0;
+  static const _divH = 5.0;
+  static const _nameSz = 13.0;
+  static const _jobSz = 12.0;
+  static const _contactSz = 11.0;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final primary = theme.colorScheme.primary;
 
-    // The renderer injects a page-sized MediaQuery, so sizeOf(context) gives
-    // the printable-area dimensions — no LayoutBuilder needed.
-    final size = MediaQuery.sizeOf(context);
-    final w = size.width;
-    final h = size.height;
-    final padding = w * 0.06;
-    final innerH = h - padding * 2;
-    final imgSize = innerH * 0.44;
-    final divH = innerH * 0.08;
-    final rowH = (innerH - imgSize - divH) / 3;
-    final iconSz = rowH * 0.55;
-    final textSz = rowH * 0.55;
-    final nameSz = imgSize * 0.22;
-    final jobSz = imgSize * 0.17;
-
-    return SizedBox(
-      width: w,
-      height: h,
-      child: Container(
+    return Container(
+      decoration: BoxDecoration(
         color: Colors.white,
-        padding: EdgeInsets.all(padding),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: Image.asset(
-                    'assets/image.jpg',
-                    width: imgSize,
-                    height: imgSize,
-                    fit: BoxFit.cover,
-                  ),
+        borderRadius: BorderRadius.circular(_radius),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      padding: const EdgeInsets.all(_pad),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: Image.asset(
+                  'assets/image.jpg',
+                  width: _imgSize,
+                  height: _imgSize,
+                  fit: BoxFit.cover,
                 ),
-                SizedBox(width: padding * 0.6),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'John Doe',
-                        style: TextStyle(
-                          fontSize: nameSz,
-                          fontWeight: FontWeight.bold,
-                          color: theme.colorScheme.onSurface,
-                        ),
-                        overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(width: _imgGap),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'John Doe',
+                      style: TextStyle(
+                        fontSize: _nameSz,
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.onSurface,
                       ),
-                      Text(
-                        "I think I'm a developer",
-                        style: TextStyle(
-                          fontSize: jobSz,
-                          color: Colors.grey[600],
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      "I think I'm a developer",
+                      style: TextStyle(
+                        fontSize: _jobSz,
+                        color: Colors.grey[600],
                       ),
-                    ],
-                  ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            Divider(height: divH, color: primary.withValues(alpha: 0.3)),
-            _ContactRow(
-              Icons.email_outlined,
-              'john.doe@example.com',
-              iconSize: iconSz,
-              fontSize: textSz,
-            ),
-            _ContactRow(
-              Icons.phone_outlined,
-              '+1 (555) 123-4567',
-              iconSize: iconSz,
-              fontSize: textSz,
-            ),
-            _ContactRow(
-              Icons.language_outlined,
-              'www.example.com',
-              iconSize: iconSz,
-              fontSize: textSz,
-            ),
-          ],
-        ),
+              ),
+            ],
+          ),
+          const SizedBox(height: _divH),
+          Divider(color: primary.withValues(alpha: 0.3)),
+          const _ContactRow(
+            Icons.email_outlined,
+            'john.doe@example.com',
+            size: _contactSz,
+          ),
+          const _ContactRow(
+            Icons.phone_outlined,
+            '+1 (555) 123-4567',
+            size: _contactSz,
+          ),
+          const _ContactRow(
+            Icons.language_outlined,
+            'www.example.com',
+            size: _contactSz,
+          ),
+        ],
       ),
     );
   }
 }
 
 class _ContactRow extends StatelessWidget {
-  const _ContactRow(this.icon, this.text, {this.iconSize = 14, this.fontSize});
+  const _ContactRow(this.icon, this.text, {required this.size});
   final IconData icon;
   final String text;
-  final double iconSize;
-  final double? fontSize;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: iconSize * 0.12),
+      padding: EdgeInsets.symmetric(vertical: 1.5),
       child: Row(
         children: [
-          Icon(
-            icon,
-            size: iconSize,
-            color: Theme.of(context).colorScheme.primary,
-          ),
-          SizedBox(width: iconSize * 0.5),
+          Icon(icon, size: size, color: Theme.of(context).colorScheme.primary),
+          SizedBox(width: 4.0),
           Expanded(
             child: Text(
               text,
-              style: TextStyle(fontSize: fontSize),
+              style: TextStyle(fontSize: size),
               overflow: TextOverflow.ellipsis,
             ),
           ),

@@ -33,9 +33,7 @@ Future<void> showWindowsPrintDialog(
         PrintLocalizations.delegate,
       ],
       child: FluentTheme(
-        data: MediaQuery.platformBrightnessOf(ctx) == Brightness.dark
-            ? FluentThemeData.dark()
-            : FluentThemeData.light(),
+        data: _buildTheme(MediaQuery.platformBrightnessOf(ctx)),
         // Nested Navigator so ComboBox (rootNavigator:false) pushes its popup
         // route into this sub-tree, where FluentLocalizations is available.
         // Dialog close always uses rootNavigator:true to pop the outer route.
@@ -51,6 +49,26 @@ Future<void> showWindowsPrintDialog(
           ),
         ),
       ),
+    ),
+  );
+}
+
+// ComboBox items dim their text to textFillColorSecondary on hover, which
+// looks unexpectedly faded. Override it to match primary so hover only
+// changes the background, not the text opacity.
+FluentThemeData _buildTheme(Brightness brightness) {
+  if (brightness == Brightness.dark) {
+    final base = FluentThemeData.dark();
+    return base.copyWith(
+      resources: ResourceDictionary.dark(
+        textFillColorSecondary: base.resources.textFillColorPrimary,
+      ),
+    );
+  }
+  final base = FluentThemeData.light();
+  return base.copyWith(
+    resources: ResourceDictionary.light(
+      textFillColorSecondary: base.resources.textFillColorPrimary,
     ),
   );
 }
