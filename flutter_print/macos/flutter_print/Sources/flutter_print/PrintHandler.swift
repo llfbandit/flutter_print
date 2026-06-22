@@ -3,7 +3,15 @@ import FlutterMacOS
 import PDFKit
 
 extension FlutterPrintPlugin {
-  func handlePrint(filePath: String, options: PrintOptions?, showPanel: Bool) throws {
+  func print(filePath: String, options: PrintOptions?) throws {
+    try handlePrint(filePath: filePath, options: options, showPanel: false)
+  }
+
+  func printPreview(filePath: String, options: PrintOptions?) throws {
+    try handlePrint(filePath: filePath, options: options, showPanel: true)
+  }
+
+  private func handlePrint(filePath: String, options: PrintOptions?, showPanel: Bool) throws {
     guard FileManager.default.fileExists(atPath: filePath) else {
       throw PigeonError(code: "FILE_NOT_FOUND",
                         message: "File not found: \(filePath)",
@@ -35,7 +43,7 @@ extension FlutterPrintPlugin {
     }
   }
 
-  func buildPrintInfo(options: PrintOptions?) -> NSPrintInfo {
+  private func buildPrintInfo(options: PrintOptions?) -> NSPrintInfo {
     let info = NSPrintInfo.shared.copy() as! NSPrintInfo
     let isLandscape = options?.landscape ?? false
     info.orientation = isLandscape ? .landscape : .portrait
@@ -81,7 +89,7 @@ extension FlutterPrintPlugin {
     return info
   }
 
-  func printRendered(
+  private func printRendered(
     url: URL,
     options: PrintOptions?,
     showPanel: Bool,
@@ -105,7 +113,7 @@ extension FlutterPrintPlugin {
     }
   }
 
-  func printViaLp(url: URL, options: PrintOptions?) throws {
+  private func printViaLp(url: URL, options: PrintOptions?) throws {
     var args: [String] = []
     if let addr = options?.printerAddress, !addr.isEmpty {
       args += ["-d", addr]
@@ -135,7 +143,7 @@ extension FlutterPrintPlugin {
   }
 
   @discardableResult
-  func applyNamedPaper(_ name: String, to info: NSPrintInfo, landscape: Bool) -> Bool {
+  private func applyNamedPaper(_ name: String, to info: NSPrintInfo, landscape: Bool) -> Bool {
     let sizes: [String: (Double, Double)] = [
       // ISO A-series
       "A0": (841, 1189), "A1": (594, 841), "A2": (420, 594),
