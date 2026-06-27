@@ -91,12 +91,13 @@ std::optional<FlutterError> FlutterPrintPlugin::Print(
     if (wPrinter.empty())
       return FlutterError("PRINTER_ERROR", "No printer available");
 
-    HDC hdc = CreatePrinterDC(wPrinter, opts);
+    int softwareCopies = 1;
+    HDC hdc = CreatePrinterDC(wPrinter, opts, &softwareCopies);
     if (!hdc)
       return FlutterError("PRINTER_ERROR",
                           "Cannot create printer DC for: " +
                               WideToUtf8(wPrinter.c_str()));
-    return RenderOrFallback(hdc, wPath, wPrinter);
+    return RenderOrFallback(hdc, wPath, wPrinter, softwareCopies);
   }
 
   // Other file types: delegate to the file's associated application.

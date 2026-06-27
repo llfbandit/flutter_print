@@ -28,11 +28,26 @@ int NameToDMPaper(const std::string& name) {
 }
 
 // ---------------------------------------------------------------------------
+// Copies
+// ---------------------------------------------------------------------------
+
+int GetDriverMaxCopies(const std::wstring& printerName) {
+  // A null port is accepted on NT-based Windows and resolves to the printer's
+  // default port. DC_COPIES returns the maximum copies the driver/spooler can
+  // produce, or (DWORD)-1 when the capability is not implemented.
+  const DWORD r = DeviceCapabilitiesW(printerName.c_str(), nullptr, DC_COPIES,
+                                      nullptr, nullptr);
+  if (r == static_cast<DWORD>(-1) || r == 0) return 1;
+  return static_cast<int>(r);
+}
+
+// ---------------------------------------------------------------------------
 // DEVMODE
 // ---------------------------------------------------------------------------
 
-void ApplyOptionsToDEVMODE(DEVMODE* dm, const PrintOptions& options) {
-  dm->dmCopies      = static_cast<short>(std::max<int64_t>(1, options.copies()));
+void ApplyOptionsToDEVMODE(DEVMODE* dm, const PrintOptions& options,
+                           int deviceCopies) {
+  dm->dmCopies      = static_cast<short>(std::max(1, deviceCopies));
   dm->dmOrientation = options.landscape() ? DMORIENT_LANDSCAPE : DMORIENT_PORTRAIT;
   dm->dmColor       = options.color()     ? DMCOLOR_COLOR      : DMCOLOR_MONOCHROME;
   dm->dmFields     |= DM_COPIES | DM_ORIENTATION | DM_COLOR;
@@ -81,7 +96,20 @@ void ApplyOptionsToDEVMODE(DEVMODE* dm, const PrintOptions& options) {
 }
 
 HGLOBAL BuildDevMode(const std::wstring& printerName,
-                     const PrintOptions& options) {
+                     const PrintOptions& options,
+                     int* out_software_copies) {
+  // Split the requested copies between the driver (dmCopies) and software
+  // emission. Drivers that cannot replicate copies natively report
+  // DC_COPIES == 1 and silently drop dmCopies > 1, so in that case we ask the
+  // driver for a single copy and let the renderer emit the rest.
+  const int requestedCopies = static_cast<int>(
+      std::max<int64_t>(1, options.copies()));
+  const int maxDriverCopies = GetDriverMaxCopies(printerName);
+  const bool driverHandlesAll = maxDriverCopies >= requestedCopies;
+  const int deviceCopies   = driverHandlesAll ? requestedCopies : 1;
+  if (out_software_copies)
+    *out_software_copies = driverHandlesAll ? 1 : requestedCopies;
+
   HANDLE hPrinter = nullptr;
   if (!OpenPrinterW(const_cast<LPWSTR>(printerName.c_str()), &hPrinter, nullptr))
     return nullptr;
@@ -106,7 +134,7 @@ HGLOBAL BuildDevMode(const std::wstring& printerName,
     return nullptr;
   }
 
-  ApplyOptionsToDEVMODE(dm, options);
+  ApplyOptionsToDEVMODE(dm, options, deviceCopies);
   // Let the driver validate and normalise our changes; without this round-trip
   // many drivers silently ignore the modified DEVMODE and produce a blank job.
   // On failure, proceed with the modified-but-unvalidated DEVMODE — CreateDCW
@@ -124,8 +152,9 @@ HGLOBAL BuildDevMode(const std::wstring& printerName,
 // ---------------------------------------------------------------------------
 
 HDC CreatePrinterDC(const std::wstring& printerName,
-                    const PrintOptions& options) {
-  HGLOBAL h  = BuildDevMode(printerName, options);
+                    const PrintOptions& options,
+                    int* out_software_copies) {
+  HGLOBAL h  = BuildDevMode(printerName, options, out_software_copies);
   auto*   dm = h ? static_cast<DEVMODE*>(GlobalLock(h)) : nullptr;
   HDC     hdc = CreateDCW(L"WINSPOOL", printerName.c_str(), nullptr, dm);
   if (dm) GlobalUnlock(h);

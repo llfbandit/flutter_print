@@ -16,24 +16,34 @@ namespace flutter_print {
 // ---------------------------------------------------------------------------
 
 // Render an image file to an open printer DC using GDI+ (falls back to WIC
-// for formats GDI+ does not support, e.g. WebP, HEIC).
+// for formats GDI+ does not support, e.g. WebP, HEIC). |copies| is the number
+// of copies to emit in software (>= 1); see RenderOrFallback.
 // Caller retains ownership of |hdc|.
-std::optional<FlutterError> RenderImageToDC(HDC hdc, const std::wstring& path);
+std::optional<FlutterError> RenderImageToDC(HDC hdc, const std::wstring& path,
+                                            int copies = 1);
 
 // Render all pages of a PDF file to an open printer DC using PDFium.
+// |copies| is the number of copies to emit in software (>= 1).
 // Caller retains ownership of |hdc|.
-std::optional<FlutterError> RenderPdfToDC(HDC hdc, const std::wstring& path);
+std::optional<FlutterError> RenderPdfToDC(HDC hdc, const std::wstring& path,
+                                          int copies = 1);
 
 // Convert |path| (plain-text file) to a PDF in memory and render it to |hdc|.
+// |copies| is the number of copies to emit in software (>= 1).
 // Caller retains ownership of |hdc|.
-std::optional<FlutterError> RenderTextToDC(HDC hdc, const std::wstring& path);
+std::optional<FlutterError> RenderTextToDC(HDC hdc, const std::wstring& path,
+                                           int copies = 1);
 
 // Routes |wPath| to the appropriate renderer based on file extension, or
 // falls back to ShellExecuteW "printto" for unsupported types.
 // Takes ownership of |hdc| — always calls DeleteDC before returning.
+// |copies| is the number of copies the driver could NOT replicate natively and
+// that must therefore be emitted in software (1 when the driver handles them).
+// The ShellExecuteW fallback path does not honour |copies|.
 std::optional<FlutterError> RenderOrFallback(HDC hdc,
                                               const std::wstring& wPath,
-                                              const std::wstring& printerName);
+                                              const std::wstring& printerName,
+                                              int copies = 1);
 
 // ---------------------------------------------------------------------------
 // Preview rendering — for the Flutter Windows print dialog

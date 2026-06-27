@@ -141,11 +141,14 @@ static HRESULT GetEncoderClsid(const WCHAR* mimeType, CLSID* pClsid) {
 // Print rendering
 // ---------------------------------------------------------------------------
 
-std::optional<FlutterError> RenderImageToDC(HDC hdc, const std::wstring& path) {
+std::optional<FlutterError> RenderImageToDC(HDC hdc, const std::wstring& path,
+                                            int copies) {
   Gdiplus::GdiplusStartupInput input;
   ULONG_PTR token = 0;
   if (Gdiplus::GdiplusStartup(&token, &input, nullptr) != Gdiplus::Ok)
     return FlutterError("GDI_ERROR", "GDI+ initialisation failed");
+
+  if (copies < 1) copies = 1;
 
   const int pw = GetDeviceCaps(hdc, HORZRES);
   const int ph = GetDeviceCaps(hdc, VERTRES);
@@ -158,26 +161,28 @@ std::optional<FlutterError> RenderImageToDC(HDC hdc, const std::wstring& path) {
   {
     Gdiplus::Image img(path.c_str());
     if (StartDoc(hdc, &di) > 0) {
-      if (StartPage(hdc) > 0) {
-        if (img.GetLastStatus() == Gdiplus::Ok) {
-          // GDI+ handles this format natively.
-          const UINT iw = img.GetWidth(), ih = img.GetHeight();
-          const float s = std::min(static_cast<float>(pw) / iw,
-                                   static_cast<float>(ph) / ih);
-          Gdiplus::Graphics g(hdc);
-          g.SetPageUnit(Gdiplus::UnitPixel);
-          g.DrawImage(&img,
-                      (pw - static_cast<int>(iw * s)) / 2,
-                      (ph - static_cast<int>(ih * s)) / 2,
-                      static_cast<int>(iw * s),
-                      static_cast<int>(ih * s));
+      for (int c = 0; c < copies && !err; ++c) {
+        if (StartPage(hdc) > 0) {
+          if (img.GetLastStatus() == Gdiplus::Ok) {
+            // GDI+ handles this format natively.
+            const UINT iw = img.GetWidth(), ih = img.GetHeight();
+            const float s = std::min(static_cast<float>(pw) / iw,
+                                     static_cast<float>(ph) / ih);
+            Gdiplus::Graphics g(hdc);
+            g.SetPageUnit(Gdiplus::UnitPixel);
+            g.DrawImage(&img,
+                        (pw - static_cast<int>(iw * s)) / 2,
+                        (ph - static_cast<int>(ih * s)) / 2,
+                        static_cast<int>(iw * s),
+                        static_cast<int>(ih * s));
+          } else {
+            // GDI+ can't decode this format (e.g. WebP, HEIC) — try WIC.
+            err = RenderViaWIC(hdc, path, pw, ph);
+          }
+          EndPage(hdc);
         } else {
-          // GDI+ can't decode this format (e.g. WebP, HEIC) — try WIC.
-          err = RenderViaWIC(hdc, path, pw, ph);
+          err = FlutterError("PRINT_ERROR", "StartPage failed");
         }
-        EndPage(hdc);
-      } else {
-        err = FlutterError("PRINT_ERROR", "StartPage failed");
       }
       EndDoc(hdc);
     } else {
@@ -193,16 +198,19 @@ std::optional<FlutterError> RenderImageToDC(HDC hdc, const std::wstring& path) {
 // Internal PDF render helper
 // ---------------------------------------------------------------------------
 
-// Render all pages of |doc| to |hdc|.
+// Render all pages of |doc| to |hdc|, |copies| times.
 // Caller must hold g_pdfium_mtx and have called FPDF_InitLibraryWithConfig.
 static std::optional<FlutterError> DoRenderPdfDoc(HDC hdc, FPDF_DOCUMENT doc,
-                                                   const std::wstring& docName) {
+                                                   const std::wstring& docName,
+                                                   int copies) {
   const double dpiX = static_cast<double>(GetDeviceCaps(hdc, LOGPIXELSX)) / 72.0;
   const double dpiY = static_cast<double>(GetDeviceCaps(hdc, LOGPIXELSY)) / 72.0;
   const int physW      = GetDeviceCaps(hdc, PHYSICALWIDTH);
   const int physH      = GetDeviceCaps(hdc, PHYSICALHEIGHT);
   const int marginLeft = GetDeviceCaps(hdc, PHYSICALOFFSETX);
   const int marginTop  = GetDeviceCaps(hdc, PHYSICALOFFSETY);
+
+  if (copies < 1) copies = 1;
 
   DOCINFOW di = {};
   di.cbSize      = sizeof(di);
@@ -212,25 +220,27 @@ static std::optional<FlutterError> DoRenderPdfDoc(HDC hdc, FPDF_DOCUMENT doc,
 
   if (StartDoc(hdc, &di) > 0) {
     const int pageCount = FPDF_GetPageCount(doc);
-    for (int i = 0; i < pageCount; ++i) {
-      FPDF_PAGE page = FPDF_LoadPage(doc, i);
-      if (!page) continue;
+    for (int c = 0; c < copies; ++c) {
+      for (int i = 0; i < pageCount; ++i) {
+        FPDF_PAGE page = FPDF_LoadPage(doc, i);
+        if (!page) continue;
 
-      const int nativeW = static_cast<int>(FPDF_GetPageWidth(page)  * dpiX);
-      const int nativeH = static_cast<int>(FPDF_GetPageHeight(page) * dpiY);
+        const int nativeW = static_cast<int>(FPDF_GetPageWidth(page)  * dpiX);
+        const int nativeH = static_cast<int>(FPDF_GetPageHeight(page) * dpiY);
 
-      const double scale = std::min({1.0,
-          static_cast<double>(physW) / nativeW,
-          static_cast<double>(physH) / nativeH});
-      const int renderW = static_cast<int>(nativeW * scale);
-      const int renderH = static_cast<int>(nativeH * scale);
+        const double scale = std::min({1.0,
+            static_cast<double>(physW) / nativeW,
+            static_cast<double>(physH) / nativeH});
+        const int renderW = static_cast<int>(nativeW * scale);
+        const int renderH = static_cast<int>(nativeH * scale);
 
-      if (StartPage(hdc) > 0) {
-        FPDF_RenderPage(hdc, page, -marginLeft, -marginTop, renderW, renderH,
-                        0, FPDF_ANNOT | FPDF_PRINTING);
-        EndPage(hdc);
+        if (StartPage(hdc) > 0) {
+          FPDF_RenderPage(hdc, page, -marginLeft, -marginTop, renderW, renderH,
+                          0, FPDF_ANNOT | FPDF_PRINTING);
+          EndPage(hdc);
+        }
+        FPDF_ClosePage(page);
       }
-      FPDF_ClosePage(page);
     }
     EndDoc(hdc);
   } else {
@@ -240,7 +250,8 @@ static std::optional<FlutterError> DoRenderPdfDoc(HDC hdc, FPDF_DOCUMENT doc,
   return err;
 }
 
-std::optional<FlutterError> RenderPdfToDC(HDC hdc, const std::wstring& path) {
+std::optional<FlutterError> RenderPdfToDC(HDC hdc, const std::wstring& path,
+                                          int copies) {
   EnsurePdfiumInit();
   std::lock_guard<std::mutex> lock(g_pdfium_mtx);
 
@@ -249,7 +260,7 @@ std::optional<FlutterError> RenderPdfToDC(HDC hdc, const std::wstring& path) {
   if (!doc)
     return FlutterError("PDF_ERROR", "Cannot open PDF: " + utf8);
 
-  auto err = DoRenderPdfDoc(hdc, doc, path);
+  auto err = DoRenderPdfDoc(hdc, doc, path, copies);
   FPDF_CloseDocument(doc);
   return err;
 }
@@ -315,7 +326,9 @@ std::wstring ReadTextFile(const std::wstring& path) {
   return DecodeTextBytes(ReadAllBytes(path));
 }
 
-std::optional<FlutterError> RenderTextToDC(HDC hdc, const std::wstring& path) {
+std::optional<FlutterError> RenderTextToDC(HDC hdc, const std::wstring& path,
+                                           int copies) {
+  if (copies < 1) copies = 1;
   const std::wstring text = DecodeTextBytes(ReadAllBytes(path));
 
   const int dpiX     = GetDeviceCaps(hdc, LOGPIXELSX);
@@ -396,17 +409,19 @@ std::optional<FlutterError> RenderTextToDC(HDC hdc, const std::wstring& path) {
     const int total = static_cast<int>(displayLines.size());
     const int pages = (total == 0) ? 1 : (total + linesPerPage - 1) / linesPerPage;
 
-    for (int p = 0; p < pages; ++p) {
-      if (StartPage(hdc) <= 0) continue;
-      const int first = p * linesPerPage;
-      const int end   = std::min(first + linesPerPage, total);
-      for (int li = first; li < end; ++li) {
-        const std::wstring& ln = displayLines[li];
-        if (!ln.empty())
-          TextOutW(hdc, marginX, marginY + (li - first) * lineH,
-                   ln.c_str(), static_cast<int>(ln.size()));
+    for (int c = 0; c < copies; ++c) {
+      for (int p = 0; p < pages; ++p) {
+        if (StartPage(hdc) <= 0) continue;
+        const int first = p * linesPerPage;
+        const int end   = std::min(first + linesPerPage, total);
+        for (int li = first; li < end; ++li) {
+          const std::wstring& ln = displayLines[li];
+          if (!ln.empty())
+            TextOutW(hdc, marginX, marginY + (li - first) * lineH,
+                     ln.c_str(), static_cast<int>(ln.size()));
+        }
+        EndPage(hdc);
       }
-      EndPage(hdc);
     }
     EndDoc(hdc);
   } else {
@@ -420,20 +435,21 @@ std::optional<FlutterError> RenderTextToDC(HDC hdc, const std::wstring& path) {
 
 std::optional<FlutterError> RenderOrFallback(HDC hdc,
                                               const std::wstring& wPath,
-                                              const std::wstring& printerName) {
+                                              const std::wstring& printerName,
+                                              int copies) {
   const std::string mime = GetMimeType(wPath);
   if (mime.rfind("image/", 0) == 0) {
-    auto err = RenderImageToDC(hdc, wPath);
+    auto err = RenderImageToDC(hdc, wPath, copies);
     DeleteDC(hdc);
     return err;
   }
   if (mime == "application/pdf") {
-    auto err = RenderPdfToDC(hdc, wPath);
+    auto err = RenderPdfToDC(hdc, wPath, copies);
     DeleteDC(hdc);
     return err;
   }
   if (mime.rfind("text/", 0) == 0) {
-    auto err = RenderTextToDC(hdc, wPath);
+    auto err = RenderTextToDC(hdc, wPath, copies);
     DeleteDC(hdc);
     return err;
   }
