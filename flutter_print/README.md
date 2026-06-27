@@ -5,7 +5,7 @@ A Flutter plugin focusing on print, that's it.
 **PDF and image files** are rendered natively on every platform.
 
 **All other file types** (HTML, plain text, Office documents, …) are forwarded to the platform's default handler for that format.
-`PrintOptions` fields other than `printerName` may not be forwarded in this case.
+`PrintOptions` fields other than `printerAddress` may not be forwarded in this case.
 
 **Widgets** are rendered as image in a (single page) pdf.
 
@@ -37,7 +37,7 @@ await FlutterPrint.print(
   '/path/to/document.pdf',
   options: PrintOptions(
     // Target a specific printer (uses system default when omitted).
-    printerName: 'my_printer',
+    printerAddress: 'my_printer',
 
     // Use a named page size preset.
     // Or via PageSize(width: w, height: h)
@@ -103,7 +103,7 @@ ignored.
 | `margins`        | ✔️      |     | ✔️   |         | ✔️§  |     |
 | `copies`         |         |     | ✔️   | ✔️‡     | ✔️   |     |
 | `landscape`      | ✔️      | ✔️  | ✔️   | ✔️‡    | ✔️   |    |
-| `color`          | ✔️      | ✔️  | ✔️   | ✔️‡    | ✔️   |    |
+| `color`          | ✔️      | ✔️  | ✔️¶  | ✔️‡    | ✔️   |    |
 | `duplexMode`     | ✔️      | ✔️  | ✔️   | ✔️‡    | ✔️§  |    |
 
 † On iOS, with a `printerAddress` from `FlutterPrint.ios?.pickPrinter()` (e.g. `ipp://printer.local./ipp/print`).
@@ -112,6 +112,10 @@ ignored.
 All other file types are delegated to their associated application with its own defaults.  
 
 § Linux — requires CUPS.  
+
+¶ macOS — `color: false` is forwarded as the standard `print-color-mode=monochrome`
+job option. It is honoured by printers that support that option (virtually all
+modern/driverless printers); some legacy PPD drivers may use a different keyword.  
 
 ---
 
@@ -146,6 +150,12 @@ You must add print entitlement to your app:
   <true/>
 </dict>
 ```
+
+PDF and image files are rendered and printed natively (honouring the print
+options). Any other file type is printed silently through the `lp`
+command-line tool — but a **sandboxed** app cannot spawn `lp`, so in that case
+the file is opened in its default application instead. Disable the App Sandbox
+if you need silent printing of non‑PDF/image files.
 
 ### Linux
 

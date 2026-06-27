@@ -66,6 +66,16 @@ extension FlutterPrintPlugin {
       info.updateFromPMPrintSettings()
     }
 
+    // Force greyscale output when colour is disabled. Entries added to
+    // printSettings are forwarded to the print job as CUPS options, so this
+    // mirrors the `print-color-mode` option used by the lp fallback and lets
+    // the direct (no-panel) PDF/image path honour `color` as well. When colour
+    // is enabled we leave the setting untouched so the printer keeps its
+    // default mode.
+    if options?.color == false {
+      info.printSettings["print-color-mode"] = "monochrome"
+    }
+
     let mmToPts: CGFloat = 72.0 / 25.4
 
     if let ps = options?.pageSize {
