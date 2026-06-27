@@ -39,7 +39,14 @@ extension FlutterPrintPlugin {
     } else if showPanel {
       DispatchQueue.main.async { NSWorkspace.shared.open(fileURL) }
     } else {
-      try printViaLp(url: fileURL, options: options)
+      // No native renderer for this file type. Try a silent CUPS job via lp;
+      // if that's blocked (e.g. the app is sandboxed, which forbids spawning
+      // /usr/bin/lp), fall back to handing the file to its default app.
+      do {
+        try printViaLp(url: fileURL, options: options)
+      } catch {
+        DispatchQueue.main.async { NSWorkspace.shared.open(fileURL) }
+      }
     }
   }
 
@@ -101,6 +108,18 @@ extension FlutterPrintPlugin {
       let op = NSPrintOperation(view: view, printInfo: printInfo)
       op.showsPrintPanel = showPanel
       op.showsProgressPanel = !showPanel
+      // By default the print panel only shows copies, page range and the
+      // preview. Enable the remaining controls so the panel actually reflects
+      // (and lets the user adjust) the options we applied to printInfo:
+      // paper size, orientation and scaling, plus the page-setup accessory.
+      if showPanel {
+        op.printPanel.options.formUnion([
+          .showsPaperSize,
+          .showsOrientation,
+          .showsScaling,
+          .showsPageSetupAccessory,
+        ])
+      }
       // Attach as a sheet on the app's visible window so macOS can show the
       // print panel correctly. run() (app-modal) fails with "does not support
       // printing" when called outside a user-event context.
