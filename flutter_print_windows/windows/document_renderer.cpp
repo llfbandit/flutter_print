@@ -440,18 +440,49 @@ std::optional<FlutterError> RenderOrFallback(HDC hdc,
 
   if (hdc) DeleteDC(hdc);
 
-  HINSTANCE hr;
-  if (printerName.empty()) {
-    hr = ShellExecuteW(nullptr, L"print", wPath.c_str(),
-                       nullptr, nullptr, SW_HIDE);
-  } else {
-    hr = ShellExecuteW(nullptr, L"printto", wPath.c_str(),
-                       printerName.c_str(), nullptr, SW_HIDE);
-  }
-  if (reinterpret_cast<INT_PTR>(hr) <= 32)
+  // Unknown type: delegate to the file's associated application via the shell
+  // "print"/"printto" verb. There is no Win32 API to render an arbitrary
+  // registered file type with our print options, so options are NOT honoured
+  // here — only the printer is targeted (via "printto"). We use ShellExecuteExW
+  // (not ShellExecuteW) so we can detect launch failure accurately and, when a
+  // helper process is actually spawned, catch an immediate crash.
+  SHELLEXECUTEINFOW sei = {};
+  sei.cbSize = sizeof(sei);
+  // NOCLOSEPROCESS: receive hProcess when a new process is created.
+  // NOASYNC: complete any DDE conversation before returning, so the command is
+  //   delivered even though we don't pump messages while blocked here.
+  // FLAG_NO_UI: suppress the shell's own error dialogs (this is a silent print).
+  sei.fMask  = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+  sei.lpVerb = printerName.empty() ? L"print" : L"printto";
+  sei.lpFile = wPath.c_str();
+  sei.lpParameters = printerName.empty() ? nullptr : printerName.c_str();
+  sei.nShow  = SW_HIDE;
+
+  if (!ShellExecuteExW(&sei)) {
+    const DWORD e = GetLastError();
     return FlutterError("SHELL_ERROR",
-                        "ShellExecuteW failed with code " +
-                            std::to_string(reinterpret_cast<INT_PTR>(hr)));
+                        "Failed to launch print handler for " +
+                            WideToUtf8(wPath.c_str()) + " (error " +
+                            std::to_string(e) + ")");
+  }
+
+  if (sei.hProcess) {
+    // Bounded wait — only to catch a print helper that fails immediately. We do
+    // NOT wait for printing to complete: many handlers keep running (or show
+    // UI) long after the job is spooled, so a process still alive at the
+    // timeout is treated as a successful launch.
+    constexpr DWORD kHelperWaitMs = 10000;
+    if (WaitForSingleObject(sei.hProcess, kHelperWaitMs) == WAIT_OBJECT_0) {
+      DWORD code = 0;
+      if (GetExitCodeProcess(sei.hProcess, &code) && code != 0) {
+        CloseHandle(sei.hProcess);
+        return FlutterError("SHELL_ERROR",
+                            "Print handler exited with code " +
+                                std::to_string(code));
+      }
+    }
+    CloseHandle(sei.hProcess);
+  }
   return std::nullopt;
 }
 

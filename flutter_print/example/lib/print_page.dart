@@ -9,7 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'blob/blob_url.dart';
 import 'widgets.dart';
 
-enum _Source { pdf, image, text, widget }
+enum _Source { pdf, image, text, docx, widget }
 
 // Available paper sizes for the dropdown.
 final _paperSizes = [
@@ -58,6 +58,7 @@ class _PrintPageState extends State<PrintPage> {
     _Source.pdf => 'assets/document.pdf',
     _Source.image => 'assets/image.jpg',
     _Source.text => 'assets/text.txt',
+    _Source.docx => 'assets/other.docx',
     _Source.widget => throw StateError('no asset for widget source'),
   };
 
@@ -72,6 +73,8 @@ class _PrintPageState extends State<PrintPage> {
         _Source.pdf => 'application/pdf',
         _Source.image => 'image/jpeg',
         _Source.text => 'text/plain',
+        _Source.docx =>
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         _Source.widget => throw StateError('no asset for widget source'),
       };
       return createBlobUrl(data, mime);
@@ -261,6 +264,7 @@ class _PrintPageState extends State<PrintPage> {
                   _radio('PDF', _Source.pdf),
                   _radio('Image', _Source.image),
                   _radio('Text', _Source.text),
+                  _radio('DOCX', _Source.docx),
                   _radio('Widget', _Source.widget),
                 ],
               ),

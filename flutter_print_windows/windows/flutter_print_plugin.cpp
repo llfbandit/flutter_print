@@ -4,10 +4,12 @@
 #include "printer_setup.h"
 #include "document_renderer.h"
 
+#include <shellapi.h>
 #include <thread>
 #include <unordered_set>
 
 #pragma comment(lib, "winspool.lib")
+#pragma comment(lib, "shell32.lib")
 
 namespace flutter_print {
 
@@ -309,6 +311,7 @@ void FlutterPrintPlugin::HandleWindowsMethod(const flutter::MethodCall<flutter::
   if (method == "renderPdfPageToPng") return HandleRenderPdfPageToPng(*args, std::move(result));
   if (method == "decodeTextFile")     return HandleDecodeTextFile(*args, std::move(result));
   if (method == "getMinimumMargins")  return HandleGetMinimumMargins(*args, std::move(result));
+  if (method == "openInDefaultApp")   return HandleOpenInDefaultApp(*args, std::move(result));
   result->NotImplemented();
 }
 
@@ -366,6 +369,34 @@ void FlutterPrintPlugin::HandleDecodeTextFile(const flutter::EncodableMap& args,
     const std::wstring text = ReadTextFile(wPath);
     if (!alive->load()) return;
     result->Success(flutter::EncodableValue(WideToUtf8(text.c_str())));
+  }).detach();
+}
+
+void FlutterPrintPlugin::HandleOpenInDefaultApp(const flutter::EncodableMap& args, WinResult result) {
+  auto wPath = GetFilePathArg(args, *result);
+  if (!wPath) return;
+  // Opens |file| in its associated application (the shell "open" verb) so the
+  // user gets a faithful view and the app's own print flow. Used by
+  // printPreview for file types the in-app dialog cannot preview. We do NOT
+  // wait on the launched app — it is expected to stay open for the user.
+  std::thread([result = std::move(result), wPath = std::move(*wPath),
+               alive = alive_]() mutable {
+    SHELLEXECUTEINFOW sei = {};
+    sei.cbSize = sizeof(sei);
+    sei.fMask  = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+    sei.lpVerb = L"open";
+    sei.lpFile = wPath.c_str();
+    sei.nShow  = SW_SHOWNORMAL;
+    const bool ok = ShellExecuteExW(&sei);
+    const DWORD e = ok ? 0 : GetLastError();
+    if (sei.hProcess) CloseHandle(sei.hProcess);
+    if (!alive->load()) return;
+    if (ok) {
+      result->Success();
+    } else {
+      result->Error("SHELL_ERROR",
+                    "Failed to open file (error " + std::to_string(e) + ")");
+    }
   }).detach();
 }
 

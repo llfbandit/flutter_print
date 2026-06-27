@@ -10,9 +10,9 @@ import 'package:flutter/services.dart';
 import 'package:meta/meta.dart' show immutable, protected, visibleForTesting;
 
 Object? _extractReplyValueOrThrow(
-    List<Object?>? replyList,
-    String channelName, {
-    required bool isNullValid,
+  List<Object?>? replyList,
+  String channelName, {
+  required bool isNullValid,
 }) {
   if (replyList == null) {
     throw PlatformException(
@@ -46,8 +46,9 @@ bool _deepEquals(Object? a, Object? b) {
   }
   if (a is List && b is List) {
     return a.length == b.length &&
-        a.indexed
-            .every(((int, dynamic) item) => _deepEquals(item.$2, b[item.$1]));
+        a.indexed.every(
+          ((int, dynamic) item) => _deepEquals(item.$2, b[item.$1]),
+        );
   }
   if (a is Map && b is Map) {
     if (a.length != b.length) {
@@ -96,13 +97,14 @@ int _deepHash(Object? value) {
   return value.hashCode;
 }
 
-
 /// Duplex (double-sided) printing mode.
 enum DuplexMode {
   /// Single-sided printing.
   none,
+
   /// Double-sided, flip along the long edge (portrait binding).
   longEdge,
+
   /// Double-sided, flip along the short edge (landscape binding).
   shortEdge,
 }
@@ -111,10 +113,13 @@ enum DuplexMode {
 enum ColorCapability {
   /// Color capability could not be determined.
   unknown,
+
   /// Physical color printer — the user can choose between color and grayscale.
   supported,
+
   /// Monochrome-only printer — always prints in grayscale; the toggle is hidden.
   monochrome,
+
   /// Virtual/software printer (e.g. PDF, XPS, OneNote) — always outputs in
   /// color; the toggle is hidden and color mode is enforced.
   enforced,
@@ -125,11 +130,7 @@ enum ColorCapability {
 ///
 /// When both fields are present, [name] takes priority.
 class PageSize {
-  PageSize({
-    required this.name,
-    this.width,
-    this.height,
-  });
+  PageSize({required this.name, this.width, this.height});
 
   /// Well-known paper-size identifier. Common values: `'A3'`, `'A4'`, `'A5'`,
   /// `'Letter'`, `'Legal'`. See each platform's documentation for the full
@@ -143,15 +144,12 @@ class PageSize {
   double? height;
 
   List<Object?> _toList() {
-    return <Object?>[
-      name,
-      width,
-      height,
-    ];
+    return <Object?>[name, width, height];
   }
 
   Object encode() {
-    return _toList();  }
+    return _toList();
+  }
 
   static PageSize decode(Object result) {
     result as List<Object?>;
@@ -171,7 +169,9 @@ class PageSize {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(name, other.name) && _deepEquals(width, other.width) && _deepEquals(height, other.height);
+    return _deepEquals(name, other.name) &&
+        _deepEquals(width, other.width) &&
+        _deepEquals(height, other.height);
   }
 
   @override
@@ -210,16 +210,12 @@ class PageMargins {
   double right;
 
   List<Object?> _toList() {
-    return <Object?>[
-      top,
-      bottom,
-      left,
-      right,
-    ];
+    return <Object?>[top, bottom, left, right];
   }
 
   Object encode() {
-    return _toList();  }
+    return _toList();
+  }
 
   static PageMargins decode(Object result) {
     result as List<Object?>;
@@ -240,7 +236,10 @@ class PageMargins {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(top, other.top) && _deepEquals(bottom, other.bottom) && _deepEquals(left, other.left) && _deepEquals(right, other.right);
+    return _deepEquals(top, other.top) &&
+        _deepEquals(bottom, other.bottom) &&
+        _deepEquals(left, other.left) &&
+        _deepEquals(right, other.right);
   }
 
   @override
@@ -319,7 +318,8 @@ class PrintOptions {
   }
 
   Object encode() {
-    return _toList();  }
+    return _toList();
+  }
 
   static PrintOptions decode(Object result) {
     result as List<Object?>;
@@ -343,7 +343,13 @@ class PrintOptions {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(printerAddress, other.printerAddress) && _deepEquals(pageSize, other.pageSize) && _deepEquals(margins, other.margins) && _deepEquals(copies, other.copies) && _deepEquals(landscape, other.landscape) && _deepEquals(color, other.color) && _deepEquals(duplexMode, other.duplexMode);
+    return _deepEquals(printerAddress, other.printerAddress) &&
+        _deepEquals(pageSize, other.pageSize) &&
+        _deepEquals(margins, other.margins) &&
+        _deepEquals(copies, other.copies) &&
+        _deepEquals(landscape, other.landscape) &&
+        _deepEquals(color, other.color) &&
+        _deepEquals(duplexMode, other.duplexMode);
   }
 
   @override
@@ -392,7 +398,8 @@ class PrinterCapabilities {
   }
 
   Object encode() {
-    return _toList();  }
+    return _toList();
+  }
 
   static PrinterCapabilities decode(Object result) {
     result as List<Object?>;
@@ -413,7 +420,10 @@ class PrinterCapabilities {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(colorCapability, other.colorCapability) && _deepEquals(supportsDuplex, other.supportsDuplex) && _deepEquals(maxCopies, other.maxCopies) && _deepEquals(supportedPageSizes, other.supportedPageSizes);
+    return _deepEquals(colorCapability, other.colorCapability) &&
+        _deepEquals(supportsDuplex, other.supportsDuplex) &&
+        _deepEquals(maxCopies, other.maxCopies) &&
+        _deepEquals(supportedPageSizes, other.supportedPageSizes);
   }
 
   @override
@@ -482,7 +492,8 @@ class PrinterInfo {
   }
 
   Object encode() {
-    return _toList();  }
+    return _toList();
+  }
 
   static PrinterInfo decode(Object result) {
     result as List<Object?>;
@@ -505,7 +516,12 @@ class PrinterInfo {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(label, other.label) && _deepEquals(address, other.address) && _deepEquals(details, other.details) && _deepEquals(isDefault, other.isDefault) && _deepEquals(capabilities, other.capabilities) && _deepEquals(isAvailable, other.isAvailable);
+    return _deepEquals(label, other.label) &&
+        _deepEquals(address, other.address) &&
+        _deepEquals(details, other.details) &&
+        _deepEquals(isDefault, other.isDefault) &&
+        _deepEquals(capabilities, other.capabilities) &&
+        _deepEquals(isAvailable, other.isAvailable);
   }
 
   @override
@@ -518,7 +534,6 @@ class PrinterInfo {
   }
 }
 
-
 class _PigeonCodec extends StandardMessageCodec {
   const _PigeonCodec();
   @override
@@ -526,25 +541,25 @@ class _PigeonCodec extends StandardMessageCodec {
     if (value is int) {
       buffer.putUint8(4);
       buffer.putInt64(value);
-    }    else if (value is DuplexMode) {
+    } else if (value is DuplexMode) {
       buffer.putUint8(129);
       writeValue(buffer, value.index);
-    }    else if (value is ColorCapability) {
+    } else if (value is ColorCapability) {
       buffer.putUint8(130);
       writeValue(buffer, value.index);
-    }    else if (value is PageSize) {
+    } else if (value is PageSize) {
       buffer.putUint8(131);
       writeValue(buffer, value.encode());
-    }    else if (value is PageMargins) {
+    } else if (value is PageMargins) {
       buffer.putUint8(132);
       writeValue(buffer, value.encode());
-    }    else if (value is PrintOptions) {
+    } else if (value is PrintOptions) {
       buffer.putUint8(133);
       writeValue(buffer, value.encode());
-    }    else if (value is PrinterCapabilities) {
+    } else if (value is PrinterCapabilities) {
       buffer.putUint8(134);
       writeValue(buffer, value.encode());
-    }    else if (value is PrinterInfo) {
+    } else if (value is PrinterInfo) {
       buffer.putUint8(135);
       writeValue(buffer, value.encode());
     } else {
@@ -583,9 +598,13 @@ class FlutterPrintApi {
   /// Constructor for [FlutterPrintApi]. The [binaryMessenger] named argument is
   /// available for dependency injection. If it is left null, the default
   /// BinaryMessenger will be used which routes to the host platform.
-  FlutterPrintApi({BinaryMessenger? binaryMessenger, String messageChannelSuffix = ''})
-      : pigeonVar_binaryMessenger = binaryMessenger,
-        pigeonVar_messageChannelSuffix = messageChannelSuffix.isNotEmpty ? '.$messageChannelSuffix' : '';
+  FlutterPrintApi({
+    BinaryMessenger? binaryMessenger,
+    String messageChannelSuffix = '',
+  }) : pigeonVar_binaryMessenger = binaryMessenger,
+       pigeonVar_messageChannelSuffix = messageChannelSuffix.isNotEmpty
+           ? '.$messageChannelSuffix'
+           : '';
   final BinaryMessenger? pigeonVar_binaryMessenger;
 
   static const MessageCodec<Object?> pigeonChannelCodec = _PigeonCodec();
@@ -616,21 +635,23 @@ class FlutterPrintApi {
   /// Throws a [PlatformException] if the file is not found, the file type is
   /// unsupported, or the print subsystem reports an error.
   Future<void> print(String filePath, {PrintOptions? options}) async {
-    final pigeonVar_channelName = 'dev.flutter.pigeon.flutter_print_platform_interface.FlutterPrintApi.print$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName =
+        'dev.flutter.pigeon.flutter_print_platform_interface.FlutterPrintApi.print$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[filePath, options]);
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
+      <Object?>[filePath, options],
+    );
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(
-        pigeonVar_replyList,
-        pigeonVar_channelName,
-        isNullValid: true,
-    )
-    ;
+      pigeonVar_replyList,
+      pigeonVar_channelName,
+      isNullValid: true,
+    );
   }
 
   /// Opens the native print-preview or print dialog for [filePath].
@@ -649,21 +670,23 @@ class FlutterPrintApi {
   ///
   /// Throws a [PlatformException] if the file is not found.
   Future<void> printPreview(String filePath, {PrintOptions? options}) async {
-    final pigeonVar_channelName = 'dev.flutter.pigeon.flutter_print_platform_interface.FlutterPrintApi.printPreview$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName =
+        'dev.flutter.pigeon.flutter_print_platform_interface.FlutterPrintApi.printPreview$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[filePath, options]);
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
+      <Object?>[filePath, options],
+    );
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(
-        pigeonVar_replyList,
-        pigeonVar_channelName,
-        isNullValid: true,
-    )
-    ;
+      pigeonVar_replyList,
+      pigeonVar_channelName,
+      isNullValid: true,
+    );
   }
 
   /// Returns all printers currently available on this device.
@@ -672,7 +695,8 @@ class FlutterPrintApi {
   ///
   /// **iOS** - use [pickPrinter] instead.
   Future<List<PrinterInfo>> listPrinters() async {
-    final pigeonVar_channelName = 'dev.flutter.pigeon.flutter_print_platform_interface.FlutterPrintApi.listPrinters$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName =
+        'dev.flutter.pigeon.flutter_print_platform_interface.FlutterPrintApi.listPrinters$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -682,11 +706,10 @@ class FlutterPrintApi {
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-        pigeonVar_replyList,
-        pigeonVar_channelName,
-        isNullValid: false,
-    )
-    ;
+      pigeonVar_replyList,
+      pigeonVar_channelName,
+      isNullValid: false,
+    );
     return (pigeonVar_replyValue! as List<Object?>).cast<PrinterInfo>();
   }
 
@@ -695,7 +718,8 @@ class FlutterPrintApi {
   ///
   /// Returns `null` on all other platforms.
   Future<PrinterInfo?> pickPrinter() async {
-    final pigeonVar_channelName = 'dev.flutter.pigeon.flutter_print_platform_interface.FlutterPrintApi.pickPrinter$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName =
+        'dev.flutter.pigeon.flutter_print_platform_interface.FlutterPrintApi.pickPrinter$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -705,11 +729,10 @@ class FlutterPrintApi {
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-        pigeonVar_replyList,
-        pigeonVar_channelName,
-        isNullValid: true,
-    )
-    ;
+      pigeonVar_replyList,
+      pigeonVar_channelName,
+      isNullValid: true,
+    );
     return pigeonVar_replyValue as PrinterInfo?;
   }
 }

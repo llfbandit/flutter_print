@@ -1,7 +1,9 @@
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_print_platform_interface/flutter_print_platform_interface.dart';
 
+import '../windows_print_channel.dart';
 import 'l10n/print_localizations.dart';
+import 'print_dialog_utils.dart';
 import 'widgets/print_preview_panel.dart';
 import 'widgets/print_settings_panel.dart';
 
@@ -13,7 +15,19 @@ Future<void> showWindowsPrintDialog(
   BuildContext context,
   String filePath,
   PrintOptions? initialOptions,
-) {
+) async {
+  // The in-app dialog can only preview (and apply settings to) PDF, image and
+  // text files. For anything else, showing it would present a blank preview and
+  // controls that the underlying shell-print path silently ignores. Instead,
+  // open the file in its associated application, where the user gets a faithful
+  // view and the app's own fully featured print flow.
+  final mime = await WindowsPrintChannel.getMimeType(filePath);
+  if (!mimeIsPdf(mime) && !mimeIsImage(mime) && !mimeIsText(mime)) {
+    await WindowsPrintChannel.openInDefaultApp(filePath);
+    return;
+  }
+  if (!context.mounted) return;
+
   final locale = Localizations.maybeLocaleOf(context) ?? const Locale('en');
 
   // Use showGeneralDialog (Flutter core) instead of fluent_ui's showDialog,

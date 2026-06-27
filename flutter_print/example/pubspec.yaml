@@ -35,3 +35,4 @@ flutter:
     - assets/document.pdf
     - assets/image.jpg
     - assets/text.txt
+    - assets/other.docx

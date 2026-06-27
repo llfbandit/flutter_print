@@ -29,6 +29,11 @@ class WindowsPrintChannel {
   static Future<String?> decodeTextFile(String filePath) =>
       _channel.invokeMethod<String>('decodeTextFile', {'filePath': filePath});
 
+  /// Opens [filePath] in its associated application (the shell "open" verb).
+  /// Used by the preview flow for file types the in-app dialog cannot render.
+  static Future<void> openInDefaultApp(String filePath) =>
+      _channel.invokeMethod<void>('openInDefaultApp', {'filePath': filePath});
+
   /// Returns the hardware minimum margins (unprintable area) in mm for
   /// [printerName] with the given paper size.
   static Future<PageMargins?> getMinimumMargins({
