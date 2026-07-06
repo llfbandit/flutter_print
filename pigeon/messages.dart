@@ -82,6 +82,22 @@ class PageSize {
   final double? height;
 }
 
+/// A contiguous range of pages to print, expressed as 1-based, inclusive page
+/// numbers.
+///
+/// A single page is a range where [start] equals [end] (e.g. page 5 →
+/// `PageRange(start: 5, end: 5)`).
+class PageRange {
+  const PageRange({required this.start, required this.end});
+
+  /// First page of the range (1-based, inclusive).
+  final int start;
+
+  /// Last page of the range (1-based, inclusive). Equal to [start] for a
+  /// single page.
+  final int end;
+}
+
 /// Per-side page margins expressed in millimetres.
 ///
 /// **iOS** — ignored; margins are controlled by the system print dialog.
@@ -120,6 +136,7 @@ class PrintOptions {
     this.landscape,
     this.color,
     this.duplexMode,
+    this.pageRanges,
   });
 
   /// Technical address of the target printer. Use [PrinterInfo.address] as
@@ -165,6 +182,21 @@ class PrintOptions {
   /// Ignored on iOS (controlled by the system dialog) and on Windows for
   /// unknown file types.
   final DuplexMode? duplexMode;
+
+  /// Pages to print, as one or more 1-based, inclusive ranges. For example,
+  /// pages 1–3 and 5 → `[PageRange(start: 1, end: 3), PageRange(start: 5,
+  /// end: 5)]`.
+  ///
+  /// When `null` or empty, all pages are printed.
+  ///
+  /// Platform support: Windows (PDF, image, and text files — the range is
+  /// applied while rendering), macOS (PDF and image files), and Linux (via the
+  /// CUPS `page-ranges` option).
+  ///
+  /// Ignored on Android, iOS, and Web, where page selection is controlled by
+  /// the system print dialog, and for delegated/unknown file types on every
+  /// platform.
+  final List<PageRange>? pageRanges;
 }
 
 /// Capabilities of a specific printer as reported by the host platform.

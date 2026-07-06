@@ -262,6 +262,55 @@ struct PageSize: Hashable, CustomStringConvertible {
   }
 }
 
+/// A contiguous range of pages to print, expressed as 1-based, inclusive page
+/// numbers.
+///
+/// A single page is a range where [start] equals [end] (e.g. page 5 →
+/// `PageRange(start: 5, end: 5)`).
+///
+/// Generated class from Pigeon that represents data sent in messages.
+struct PageRange: Hashable, CustomStringConvertible {
+  /// First page of the range (1-based, inclusive).
+  var start: Int64
+  /// Last page of the range (1-based, inclusive). Equal to [start] for a
+  /// single page.
+  var end: Int64
+
+
+  // swift-format-ignore: AlwaysUseLowerCamelCase
+  static func fromList(_ pigeonVar_list: [Any?]) -> PageRange? {
+    let start = pigeonVar_list[0] as! Int64
+    let end = pigeonVar_list[1] as! Int64
+
+    return PageRange(
+      start: start,
+      end: end
+    )
+  }
+  func toList() -> [Any?] {
+    return [
+      start,
+      end,
+    ]
+  }
+  static func == (lhs: PageRange, rhs: PageRange) -> Bool {
+    if Swift.type(of: lhs) != Swift.type(of: rhs) {
+      return false
+    }
+    return MessagesPigeonInternal.deepEquals(lhs.start, rhs.start) && MessagesPigeonInternal.deepEquals(lhs.end, rhs.end)
+  }
+
+  func hash(into hasher: inout Hasher) {
+    hasher.combine("PageRange")
+    MessagesPigeonInternal.deepHash(value: start, hasher: &hasher)
+    MessagesPigeonInternal.deepHash(value: end, hasher: &hasher)
+  }
+
+  public var description: String {
+    return "PageRange(start: \(String(describing: start)), end: \(String(describing: end)))"
+  }
+}
+
 /// Per-side page margins expressed in millimetres.
 ///
 /// **iOS** — ignored; margins are controlled by the system print dialog.
@@ -365,6 +414,20 @@ struct PrintOptions: Hashable, CustomStringConvertible {
   /// Ignored on iOS (controlled by the system dialog) and on Windows for
   /// unknown file types.
   var duplexMode: DuplexMode? = nil
+  /// Pages to print, as one or more 1-based, inclusive ranges. For example,
+  /// pages 1–3 and 5 → `[PageRange(start: 1, end: 3), PageRange(start: 5,
+  /// end: 5)]`.
+  ///
+  /// When `null` or empty, all pages are printed.
+  ///
+  /// Platform support: Windows (PDF, image, and text files — the range is
+  /// applied while rendering), macOS (PDF and image files), and Linux (via the
+  /// CUPS `page-ranges` option).
+  ///
+  /// Ignored on Android, iOS, and Web, where page selection is controlled by
+  /// the system print dialog, and for delegated/unknown file types on every
+  /// platform.
+  var pageRanges: [PageRange]? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -376,6 +439,7 @@ struct PrintOptions: Hashable, CustomStringConvertible {
     let landscape: Bool? = nilOrValue(pigeonVar_list[4])
     let color: Bool? = nilOrValue(pigeonVar_list[5])
     let duplexMode: DuplexMode? = nilOrValue(pigeonVar_list[6])
+    let pageRanges: [PageRange]? = nilOrValue(pigeonVar_list[7])
 
     return PrintOptions(
       printerAddress: printerAddress,
@@ -384,7 +448,8 @@ struct PrintOptions: Hashable, CustomStringConvertible {
       copies: copies,
       landscape: landscape,
       color: color,
-      duplexMode: duplexMode
+      duplexMode: duplexMode,
+      pageRanges: pageRanges
     )
   }
   func toList() -> [Any?] {
@@ -396,13 +461,14 @@ struct PrintOptions: Hashable, CustomStringConvertible {
       landscape,
       color,
       duplexMode,
+      pageRanges,
     ]
   }
   static func == (lhs: PrintOptions, rhs: PrintOptions) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return MessagesPigeonInternal.deepEquals(lhs.printerAddress, rhs.printerAddress) && MessagesPigeonInternal.deepEquals(lhs.pageSize, rhs.pageSize) && MessagesPigeonInternal.deepEquals(lhs.margins, rhs.margins) && MessagesPigeonInternal.deepEquals(lhs.copies, rhs.copies) && MessagesPigeonInternal.deepEquals(lhs.landscape, rhs.landscape) && MessagesPigeonInternal.deepEquals(lhs.color, rhs.color) && MessagesPigeonInternal.deepEquals(lhs.duplexMode, rhs.duplexMode)
+    return MessagesPigeonInternal.deepEquals(lhs.printerAddress, rhs.printerAddress) && MessagesPigeonInternal.deepEquals(lhs.pageSize, rhs.pageSize) && MessagesPigeonInternal.deepEquals(lhs.margins, rhs.margins) && MessagesPigeonInternal.deepEquals(lhs.copies, rhs.copies) && MessagesPigeonInternal.deepEquals(lhs.landscape, rhs.landscape) && MessagesPigeonInternal.deepEquals(lhs.color, rhs.color) && MessagesPigeonInternal.deepEquals(lhs.duplexMode, rhs.duplexMode) && MessagesPigeonInternal.deepEquals(lhs.pageRanges, rhs.pageRanges)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -414,10 +480,11 @@ struct PrintOptions: Hashable, CustomStringConvertible {
     MessagesPigeonInternal.deepHash(value: landscape, hasher: &hasher)
     MessagesPigeonInternal.deepHash(value: color, hasher: &hasher)
     MessagesPigeonInternal.deepHash(value: duplexMode, hasher: &hasher)
+    MessagesPigeonInternal.deepHash(value: pageRanges, hasher: &hasher)
   }
 
   public var description: String {
-    return "PrintOptions(printerAddress: \(String(describing: printerAddress)), pageSize: \(String(describing: pageSize)), margins: \(String(describing: margins)), copies: \(String(describing: copies)), landscape: \(String(describing: landscape)), color: \(String(describing: color)), duplexMode: \(String(describing: duplexMode)))"
+    return "PrintOptions(printerAddress: \(String(describing: printerAddress)), pageSize: \(String(describing: pageSize)), margins: \(String(describing: margins)), copies: \(String(describing: copies)), landscape: \(String(describing: landscape)), color: \(String(describing: color)), duplexMode: \(String(describing: duplexMode)), pageRanges: \(String(describing: pageRanges)))"
   }
 }
 
@@ -583,12 +650,14 @@ private class MessagesPigeonCodecReader: FlutterStandardReader {
     case 131:
       return PageSize.fromList(self.readValue() as! [Any?])
     case 132:
-      return PageMargins.fromList(self.readValue() as! [Any?])
+      return PageRange.fromList(self.readValue() as! [Any?])
     case 133:
-      return PrintOptions.fromList(self.readValue() as! [Any?])
+      return PageMargins.fromList(self.readValue() as! [Any?])
     case 134:
-      return PrinterCapabilities.fromList(self.readValue() as! [Any?])
+      return PrintOptions.fromList(self.readValue() as! [Any?])
     case 135:
+      return PrinterCapabilities.fromList(self.readValue() as! [Any?])
+    case 136:
       return PrinterInfo.fromList(self.readValue() as! [Any?])
     default:
       return super.readValue(ofType: type)
@@ -607,17 +676,20 @@ private class MessagesPigeonCodecWriter: FlutterStandardWriter {
     } else if let value = value as? PageSize {
       super.writeByte(131)
       super.writeValue(value.toList())
-    } else if let value = value as? PageMargins {
+    } else if let value = value as? PageRange {
       super.writeByte(132)
       super.writeValue(value.toList())
-    } else if let value = value as? PrintOptions {
+    } else if let value = value as? PageMargins {
       super.writeByte(133)
       super.writeValue(value.toList())
-    } else if let value = value as? PrinterCapabilities {
+    } else if let value = value as? PrintOptions {
       super.writeByte(134)
       super.writeValue(value.toList())
-    } else if let value = value as? PrinterInfo {
+    } else if let value = value as? PrinterCapabilities {
       super.writeByte(135)
+      super.writeValue(value.toList())
+    } else if let value = value as? PrinterInfo {
+      super.writeByte(136)
       super.writeValue(value.toList())
     } else {
       super.writeValue(value)

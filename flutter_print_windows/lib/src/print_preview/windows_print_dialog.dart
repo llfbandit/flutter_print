@@ -133,6 +133,7 @@ class _PrintDialogState extends State<_PrintDialog> {
             SizedBox(
               width: 260,
               child: PrintSettingsPanel(
+                filePath: widget.filePath,
                 initialOptions: _options,
                 onOptionsChanged: (opts) => setState(() => _options = opts),
               ),

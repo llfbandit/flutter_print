@@ -1,16 +1,19 @@
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_print_platform_interface/flutter_print_platform_interface.dart';
 
+import '../../windows_print_channel.dart';
 import '../l10n/print_localizations.dart';
 import '../print_dialog_utils.dart';
 
 class PrintSettingsPanel extends StatefulWidget {
   const PrintSettingsPanel({
     super.key,
+    required this.filePath,
     required this.initialOptions,
     required this.onOptionsChanged,
   });
 
+  final String filePath;
   final PrintOptions initialOptions;
   final ValueChanged<PrintOptions> onOptionsChanged;
 
@@ -22,6 +25,10 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
   late PrintOptions _options;
   PageSize? _customPageSize;
   PrinterCapabilities? _caps;
+
+  // Page-range selection. Only offered for multi-page (PDF) documents, so the
+  // control stays hidden until the page count is known and greater than one.
+  int _pageCount = 0;
 
   List<String> get _supportedPageSizeNames {
     final known = _caps?.supportedPageSizes.toSet();
@@ -100,6 +107,15 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
       color: opts.color ?? true,
       pageSize: _resolvePageSize(ps?.name ?? 'A4'),
     );
+
+    _loadPageCount();
+  }
+
+  Future<void> _loadPageCount() async {
+    final mime = await WindowsPrintChannel.getMimeType(widget.filePath);
+    if (!mounted || !mimeIsPdf(mime)) return;
+    final count = await WindowsPrintChannel.getPdfPageCount(widget.filePath);
+    if (mounted) setState(() => _pageCount = count);
   }
 
   void _emit(PrintOptions opts) {
@@ -140,6 +156,15 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
               value: _options.copies ?? 1,
               max: _caps?.maxCopies,
               onChanged: (v) => _emit(_options.copyWith(copies: v)),
+            ),
+          ],
+          if (_pageCount > 1) ...[
+            const SizedBox(height: 14),
+            _SectionLabel(l10n.pages),
+            _PagesSelector(
+              pageCount: _pageCount,
+              onChanged: (ranges) =>
+                  _emit(_options.copyWith(pageRanges: ranges)),
             ),
           ],
           const SizedBox(height: 14),
@@ -303,6 +328,71 @@ class _CopiesSelector extends StatelessWidget {
         if (v != null) onChanged(v);
       },
       mode: SpinButtonPlacementMode.inline,
+    );
+  }
+}
+
+class _PagesSelector extends StatefulWidget {
+  const _PagesSelector({required this.pageCount, required this.onChanged});
+
+  final int pageCount;
+
+  /// Emits the selected ranges, or an empty list for "all pages" (which is also
+  /// used while a custom expression is blank or not yet valid).
+  final ValueChanged<List<PageRange>> onChanged;
+
+  @override
+  State<_PagesSelector> createState() => _PagesSelectorState();
+}
+
+class _PagesSelectorState extends State<_PagesSelector> {
+  final _controller = TextEditingController();
+  bool _custom = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _emit() {
+    if (!_custom) {
+      widget.onChanged(const []);
+      return;
+    }
+    final ranges = parsePageRanges(_controller.text, pageCount: widget.pageCount);
+    widget.onChanged(ranges ?? const []);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = PrintLocalizations.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ComboBox<bool>(
+          isExpanded: true,
+          value: _custom,
+          onChanged: (v) {
+            if (v == null) return;
+            setState(() => _custom = v);
+            _emit();
+          },
+          items: [
+            ComboBoxItem<bool>(value: false, child: Text(l10n.allPages)),
+            ComboBoxItem<bool>(value: true, child: Text(l10n.pageRangeCustom)),
+          ],
+        ),
+        if (_custom) ...[
+          const SizedBox(height: 8),
+          TextBox(
+            controller: _controller,
+            placeholder: '2-6, 9, 15',
+            keyboardType: TextInputType.text,
+            onChanged: (_) => _emit(),
+          ),
+        ],
+      ],
     );
   }
 }

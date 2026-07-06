@@ -379,6 +379,113 @@ public class Messages {
   }
 
   /**
+   * A contiguous range of pages to print, expressed as 1-based, inclusive page
+   * numbers.
+   *
+   * A single page is a range where [start] equals [end] (e.g. page 5 →
+   * `PageRange(start: 5, end: 5)`).
+   *
+   * Generated class from Pigeon that represents data sent in messages.
+   */
+  public static final class PageRange {
+    /** First page of the range (1-based, inclusive). */
+    private @NonNull Long start;
+
+    public @NonNull Long getStart() {
+      return start;
+    }
+
+    public void setStart(@NonNull Long setterArg) {
+      if (setterArg == null) {
+        throw new IllegalStateException("Nonnull field \"start\" is null.");
+      }
+      this.start = setterArg;
+    }
+
+    /**
+     * Last page of the range (1-based, inclusive). Equal to [start] for a
+     * single page.
+     */
+    private @NonNull Long end;
+
+    public @NonNull Long getEnd() {
+      return end;
+    }
+
+    public void setEnd(@NonNull Long setterArg) {
+      if (setterArg == null) {
+        throw new IllegalStateException("Nonnull field \"end\" is null.");
+      }
+      this.end = setterArg;
+    }
+
+    /** Constructor is non-public to enforce null safety; use Builder. */
+    PageRange() {}
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) { return true; }
+      if (o == null || getClass() != o.getClass()) { return false; }
+      PageRange that = (PageRange) o;
+      return pigeonDeepEquals(start, that.start) && pigeonDeepEquals(end, that.end);
+    }
+
+    @Override
+    public int hashCode() {
+      Object[] fields = new Object[] {getClass(), start, end};
+      return pigeonDeepHashCode(fields);
+    }
+
+    @Override
+    public String toString() {
+      return "PageRange{" + "start=" + start + ", " + "end=" + end + "}";
+    }
+
+    public static final class Builder {
+
+      private @Nullable Long start;
+
+      @CanIgnoreReturnValue
+      public @NonNull Builder setStart(@NonNull Long setterArg) {
+        this.start = setterArg;
+        return this;
+      }
+
+      private @Nullable Long end;
+
+      @CanIgnoreReturnValue
+      public @NonNull Builder setEnd(@NonNull Long setterArg) {
+        this.end = setterArg;
+        return this;
+      }
+
+      public @NonNull PageRange build() {
+        PageRange pigeonReturn = new PageRange();
+        pigeonReturn.setStart(start);
+        pigeonReturn.setEnd(end);
+        return pigeonReturn;
+      }
+    }
+
+    @NonNull
+    ArrayList<Object> toList() {
+      ArrayList<Object> toListResult = new ArrayList<>(2);
+      toListResult.add(start);
+      toListResult.add(end);
+      return toListResult;
+    }
+
+    static @NonNull PageRange fromList(@NonNull ArrayList<Object> pigeonVar_list) {
+      PageRange pigeonResult = new PageRange();
+      Object start = pigeonVar_list.get(0);
+      pigeonResult.setStart((Long) start);
+      Object end = pigeonVar_list.get(1);
+      pigeonResult.setEnd((Long) end);
+      return pigeonResult;
+    }
+  }
+
+  /**
    * Per-side page margins expressed in millimetres.
    *
    * **iOS** — ignored; margins are controlled by the system print dialog.
@@ -656,23 +763,48 @@ public class Messages {
       this.duplexMode = setterArg;
     }
 
+    /**
+     * Pages to print, as one or more 1-based, inclusive ranges. For example,
+     * pages 1–3 and 5 → `[PageRange(start: 1, end: 3), PageRange(start: 5,
+     * end: 5)]`.
+     *
+     * When `null` or empty, all pages are printed.
+     *
+     * Platform support: Windows (PDF, image, and text files — the range is
+     * applied while rendering), macOS (PDF and image files), and Linux (via the
+     * CUPS `page-ranges` option).
+     *
+     * Ignored on Android, iOS, and Web, where page selection is controlled by
+     * the system print dialog, and for delegated/unknown file types on every
+     * platform.
+     */
+    private @Nullable List<PageRange> pageRanges;
+
+    public @Nullable List<PageRange> getPageRanges() {
+      return pageRanges;
+    }
+
+    public void setPageRanges(@Nullable List<PageRange> setterArg) {
+      this.pageRanges = setterArg;
+    }
+
     @Override
     public boolean equals(Object o) {
       if (this == o) { return true; }
       if (o == null || getClass() != o.getClass()) { return false; }
       PrintOptions that = (PrintOptions) o;
-      return pigeonDeepEquals(printerAddress, that.printerAddress) && pigeonDeepEquals(pageSize, that.pageSize) && pigeonDeepEquals(margins, that.margins) && pigeonDeepEquals(copies, that.copies) && pigeonDeepEquals(landscape, that.landscape) && pigeonDeepEquals(color, that.color) && pigeonDeepEquals(duplexMode, that.duplexMode);
+      return pigeonDeepEquals(printerAddress, that.printerAddress) && pigeonDeepEquals(pageSize, that.pageSize) && pigeonDeepEquals(margins, that.margins) && pigeonDeepEquals(copies, that.copies) && pigeonDeepEquals(landscape, that.landscape) && pigeonDeepEquals(color, that.color) && pigeonDeepEquals(duplexMode, that.duplexMode) && pigeonDeepEquals(pageRanges, that.pageRanges);
     }
 
     @Override
     public int hashCode() {
-      Object[] fields = new Object[] {getClass(), printerAddress, pageSize, margins, copies, landscape, color, duplexMode};
+      Object[] fields = new Object[] {getClass(), printerAddress, pageSize, margins, copies, landscape, color, duplexMode, pageRanges};
       return pigeonDeepHashCode(fields);
     }
 
     @Override
     public String toString() {
-      return "PrintOptions{" + "printerAddress=" + printerAddress + ", " + "pageSize=" + pageSize + ", " + "margins=" + margins + ", " + "copies=" + copies + ", " + "landscape=" + landscape + ", " + "color=" + color + ", " + "duplexMode=" + duplexMode + "}";
+      return "PrintOptions{" + "printerAddress=" + printerAddress + ", " + "pageSize=" + pageSize + ", " + "margins=" + margins + ", " + "copies=" + copies + ", " + "landscape=" + landscape + ", " + "color=" + color + ", " + "duplexMode=" + duplexMode + ", " + "pageRanges=" + pageRanges + "}";
     }
 
     public static final class Builder {
@@ -733,6 +865,14 @@ public class Messages {
         return this;
       }
 
+      private @Nullable List<PageRange> pageRanges;
+
+      @CanIgnoreReturnValue
+      public @NonNull Builder setPageRanges(@Nullable List<PageRange> setterArg) {
+        this.pageRanges = setterArg;
+        return this;
+      }
+
       public @NonNull PrintOptions build() {
         PrintOptions pigeonReturn = new PrintOptions();
         pigeonReturn.setPrinterAddress(printerAddress);
@@ -742,13 +882,14 @@ public class Messages {
         pigeonReturn.setLandscape(landscape);
         pigeonReturn.setColor(color);
         pigeonReturn.setDuplexMode(duplexMode);
+        pigeonReturn.setPageRanges(pageRanges);
         return pigeonReturn;
       }
     }
 
     @NonNull
     ArrayList<Object> toList() {
-      ArrayList<Object> toListResult = new ArrayList<>(7);
+      ArrayList<Object> toListResult = new ArrayList<>(8);
       toListResult.add(printerAddress);
       toListResult.add(pageSize);
       toListResult.add(margins);
@@ -756,6 +897,7 @@ public class Messages {
       toListResult.add(landscape);
       toListResult.add(color);
       toListResult.add(duplexMode);
+      toListResult.add(pageRanges);
       return toListResult;
     }
 
@@ -775,6 +917,8 @@ public class Messages {
       pigeonResult.setColor((Boolean) color);
       Object duplexMode = pigeonVar_list.get(6);
       pigeonResult.setDuplexMode((DuplexMode) duplexMode);
+      Object pageRanges = pigeonVar_list.get(7);
+      pigeonResult.setPageRanges((List<PageRange>) pageRanges);
       return pigeonResult;
     }
   }
@@ -1171,12 +1315,14 @@ public class Messages {
         case (byte) 131:
           return PageSize.fromList((ArrayList<Object>) readValue(buffer));
         case (byte) 132:
-          return PageMargins.fromList((ArrayList<Object>) readValue(buffer));
+          return PageRange.fromList((ArrayList<Object>) readValue(buffer));
         case (byte) 133:
-          return PrintOptions.fromList((ArrayList<Object>) readValue(buffer));
+          return PageMargins.fromList((ArrayList<Object>) readValue(buffer));
         case (byte) 134:
-          return PrinterCapabilities.fromList((ArrayList<Object>) readValue(buffer));
+          return PrintOptions.fromList((ArrayList<Object>) readValue(buffer));
         case (byte) 135:
+          return PrinterCapabilities.fromList((ArrayList<Object>) readValue(buffer));
+        case (byte) 136:
           return PrinterInfo.fromList((ArrayList<Object>) readValue(buffer));
         default:
           return super.readValueOfType(type, buffer);
@@ -1194,17 +1340,20 @@ public class Messages {
       } else if (value instanceof PageSize) {
         stream.write(131);
         writeValue(stream, ((PageSize) value).toList());
-      } else if (value instanceof PageMargins) {
+      } else if (value instanceof PageRange) {
         stream.write(132);
+        writeValue(stream, ((PageRange) value).toList());
+      } else if (value instanceof PageMargins) {
+        stream.write(133);
         writeValue(stream, ((PageMargins) value).toList());
       } else if (value instanceof PrintOptions) {
-        stream.write(133);
+        stream.write(134);
         writeValue(stream, ((PrintOptions) value).toList());
       } else if (value instanceof PrinterCapabilities) {
-        stream.write(134);
+        stream.write(135);
         writeValue(stream, ((PrinterCapabilities) value).toList());
       } else if (value instanceof PrinterInfo) {
-        stream.write(135);
+        stream.write(136);
         writeValue(stream, ((PrinterInfo) value).toList());
       } else {
         super.writeValue(stream, value);

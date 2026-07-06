@@ -9,6 +9,7 @@ extension PrintOptionsCopyWith on PrintOptions {
     bool? landscape,
     bool? color,
     DuplexMode? duplexMode,
+    List<PageRange>? pageRanges,
   }) => PrintOptions(
     printerAddress: printerAddress ?? this.printerAddress,
     pageSize: pageSize ?? this.pageSize,
@@ -17,7 +18,49 @@ extension PrintOptionsCopyWith on PrintOptions {
     landscape: landscape ?? this.landscape,
     color: color ?? this.color,
     duplexMode: duplexMode ?? this.duplexMode,
+    pageRanges: pageRanges ?? this.pageRanges,
   );
+}
+
+/// Parses a user-entered page-range expression such as `"2-6, 9, 15"` into a
+/// list of [PageRange]. Returns `null` when the input is blank (print all
+/// pages) or cannot be parsed into at least one valid range.
+///
+/// [pageCount] (when > 0) clamps ranges to the document and rejects an input
+/// that selects no in-range page. Whitespace is ignored; `start` > `end` in a
+/// token is normalised by swapping.
+List<PageRange>? parsePageRanges(String input, {int pageCount = 0}) {
+  final trimmed = input.trim();
+  if (trimmed.isEmpty) return null;
+
+  final ranges = <PageRange>[];
+  for (final token in trimmed.split(',')) {
+    final part = token.trim();
+    if (part.isEmpty) continue;
+
+    final dash = part.indexOf('-');
+    int? start;
+    int? end;
+    if (dash < 0) {
+      start = end = int.tryParse(part);
+    } else {
+      start = int.tryParse(part.substring(0, dash).trim());
+      end = int.tryParse(part.substring(dash + 1).trim());
+    }
+    if (start == null || end == null) return null;
+    if (start > end) {
+      final t = start;
+      start = end;
+      end = t;
+    }
+    if (start < 1) return null;
+    if (pageCount > 0) {
+      if (start > pageCount) continue;
+      if (end > pageCount) end = pageCount;
+    }
+    ranges.add(PageRange(start: start, end: end));
+  }
+  return ranges.isEmpty ? null : ranges;
 }
 
 bool mimeIsPdf(String mime) => mime == 'application/pdf';

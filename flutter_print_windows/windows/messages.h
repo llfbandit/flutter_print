@@ -132,6 +132,45 @@ class PageSize {
 };
 
 
+// A contiguous range of pages to print, expressed as 1-based, inclusive page
+// numbers.
+//
+// A single page is a range where [start] equals [end] (e.g. page 5 →
+// `PageRange(start: 5, end: 5)`).
+//
+// Generated class from Pigeon that represents data sent in messages.
+class PageRange {
+ public:
+  // Constructs an object setting all fields.
+  explicit PageRange(
+    int64_t start,
+    int64_t end);
+
+  // First page of the range (1-based, inclusive).
+  int64_t start() const;
+  void set_start(int64_t value_arg);
+
+  // Last page of the range (1-based, inclusive). Equal to [start] for a
+  // single page.
+  int64_t end() const;
+  void set_end(int64_t value_arg);
+
+  bool operator==(const PageRange& other) const;
+  bool operator!=(const PageRange& other) const;
+  /// Returns a hash code value for the object. This method is supported for the benefit of hash tables.
+  size_t Hash() const;
+  /// Stream output operator for formatted string representation.
+  friend std::ostream& operator<<(std::ostream& os, const PageRange& obj);
+ private:
+  static PageRange FromEncodableList(const ::flutter::EncodableList& list);
+  ::flutter::EncodableList ToEncodableList() const;
+  friend class FlutterPrintApi;
+  friend class PigeonInternalCodecSerializer;
+  int64_t start_;
+  int64_t end_;
+};
+
+
 // Per-side page margins expressed in millimetres.
 //
 // **iOS** — ignored; margins are controlled by the system print dialog.
@@ -201,7 +240,8 @@ class PrintOptions {
     const int64_t* copies,
     const bool* landscape,
     const bool* color,
-    const DuplexMode* duplex_mode);
+    const DuplexMode* duplex_mode,
+    const ::flutter::EncodableList* page_ranges);
 
   ~PrintOptions() = default;
   PrintOptions(const PrintOptions& other);
@@ -266,6 +306,23 @@ class PrintOptions {
   void set_duplex_mode(const DuplexMode* value_arg);
   void set_duplex_mode(const DuplexMode& value_arg);
 
+  // Pages to print, as one or more 1-based, inclusive ranges. For example,
+  // pages 1–3 and 5 → `[PageRange(start: 1, end: 3), PageRange(start: 5,
+  // end: 5)]`.
+  //
+  // When `null` or empty, all pages are printed.
+  //
+  // Platform support: Windows (PDF, image, and text files — the range is
+  // applied while rendering), macOS (PDF and image files), and Linux (via the
+  // CUPS `page-ranges` option).
+  //
+  // Ignored on Android, iOS, and Web, where page selection is controlled by
+  // the system print dialog, and for delegated/unknown file types on every
+  // platform.
+  const ::flutter::EncodableList* page_ranges() const;
+  void set_page_ranges(const ::flutter::EncodableList* value_arg);
+  void set_page_ranges(const ::flutter::EncodableList& value_arg);
+
   bool operator==(const PrintOptions& other) const;
   bool operator!=(const PrintOptions& other) const;
   /// Returns a hash code value for the object. This method is supported for the benefit of hash tables.
@@ -284,6 +341,7 @@ class PrintOptions {
   std::optional<bool> landscape_;
   std::optional<bool> color_;
   std::optional<DuplexMode> duplex_mode_;
+  std::optional<::flutter::EncodableList> page_ranges_;
 };
 
 

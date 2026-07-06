@@ -5,6 +5,7 @@ export 'src/messages.g.dart'
         DuplexMode,
         FlutterPrintApi,
         PageMargins,
+        PageRange,
         PageSize,
         PrinterCapabilities,
         PrinterInfo,

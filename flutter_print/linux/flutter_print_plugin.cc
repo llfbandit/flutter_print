@@ -81,6 +81,34 @@ static gchar* transcode_to_png(const char* path) {
 // Print / PrintPreview
 // ---------------------------------------------------------------------------
 
+// Formats the pageRanges of |options| as a CUPS "page-ranges" value
+// (e.g. "2-6,9,15"). Returns a newly-allocated string the caller must g_free,
+// or nullptr when the selection is unset or empty (print all pages).
+static gchar* build_page_ranges(FlutterPrintPrintOptions* options) {
+  FlValue* list =
+      options ? flutter_print_print_options_get_page_ranges(options) : nullptr;
+  if (!list || fl_value_get_type(list) != FL_VALUE_TYPE_LIST ||
+      fl_value_get_length(list) == 0) {
+    return nullptr;
+  }
+  GString* out = g_string_new(nullptr);
+  for (size_t i = 0; i < fl_value_get_length(list); i++) {
+    FlValue* item = fl_value_get_list_value(list, i);
+    auto* range = FLUTTER_PRINT_PAGE_RANGE(fl_value_get_custom_value_object(item));
+    if (!range) continue;
+    int64_t start = flutter_print_page_range_get_start(range);
+    int64_t end = flutter_print_page_range_get_end(range);
+    if (out->len > 0) g_string_append_c(out, ',');
+    if (start == end) {
+      g_string_append_printf(out, "%" G_GINT64_FORMAT, start);
+    } else {
+      g_string_append_printf(out, "%" G_GINT64_FORMAT "-%" G_GINT64_FORMAT,
+                             start, end);
+    }
+  }
+  return g_string_free(out, out->len == 0);
+}
+
 static void handle_print(
     const gchar* file_path,
     FlutterPrintPrintOptions* options,
@@ -165,6 +193,13 @@ static void handle_print(
     }
   }
 
+  gchar* page_ranges = build_page_ranges(options);
+  if (page_ranges) {
+    num_options = cupsAddOption("page-ranges", page_ranges, num_options,
+                                &cups_opts);
+    g_free(page_ranges);
+  }
+
   // For formats CUPS cannot rasterise (WebP, HEIC), transcode to PNG first
   // using GDK-Pixbuf, which supports these formats when the system pixbuf
   // loaders are installed (webp-pixbuf-loader, heif-pixbuf-loader).
@@ -206,6 +241,10 @@ static void handle_print(
   gchar* copies_str = (copies && *copies > 1)
       ? g_strdup_printf("%" G_GINT64_FORMAT, *copies) : nullptr;
 
+  gchar* page_ranges = build_page_ranges(options);
+  gchar* page_ranges_opt = page_ranges
+      ? g_strdup_printf("page-ranges=%s", page_ranges) : nullptr;
+
   FlutterPrintDuplexMode* duplex_mode =
       options ? flutter_print_print_options_get_duplex_mode(options) : nullptr;
   const char* sides = nullptr;
@@ -242,6 +281,10 @@ static void handle_print(
     g_ptr_array_add(argv, const_cast<gchar*>("-o"));
     g_ptr_array_add(argv, const_cast<gchar*>(sides));
   }
+  if (page_ranges_opt) {
+    g_ptr_array_add(argv, const_cast<gchar*>("-o"));
+    g_ptr_array_add(argv, page_ranges_opt);
+  }
   g_ptr_array_add(argv, const_cast<gchar*>(file_path));
   g_ptr_array_add(argv, nullptr);
 
@@ -256,6 +299,8 @@ static void handle_print(
                          &exit_status, &err);
   g_ptr_array_free(argv, FALSE);
   g_free(copies_str);
+  g_free(page_ranges);
+  g_free(page_ranges_opt);
   g_clear_error(&err);
 
   if (!ok || exit_status != 0) {

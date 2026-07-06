@@ -35,6 +35,9 @@ class PrintLocalizations {
   String get printer => _strings.printer;
   String get noPrintersFound => _strings.noPrintersFound;
   String get copies => _strings.copies;
+  String get pages => _strings.pages;
+  String get allPages => _strings.allPages;
+  String get pageRangeCustom => _strings.pageRangeCustom;
   String get layout => _strings.layout;
   String get portrait => _strings.portrait;
   String get landscape => _strings.landscape;
@@ -97,6 +100,9 @@ class _Strings {
     required this.noPrintersFound,
     required this.defaultPrinterFormat,
     required this.copies,
+    required this.pages,
+    required this.allPages,
+    required this.pageRangeCustom,
     required this.layout,
     required this.portrait,
     required this.landscape,
@@ -119,6 +125,9 @@ class _Strings {
   final String noPrintersFound;
   final String defaultPrinterFormat;
   final String copies;
+  final String pages;
+  final String allPages;
+  final String pageRangeCustom;
   final String layout;
   final String portrait;
   final String landscape;
@@ -146,6 +155,9 @@ const _en = _Strings(
   noPrintersFound: 'No printers found',
   defaultPrinterFormat: '{name} (Default)',
   copies: 'Copies',
+  pages: 'Pages',
+  allPages: 'All',
+  pageRangeCustom: 'Custom',
   layout: 'Layout',
   portrait: 'Portrait',
   landscape: 'Landscape',
@@ -173,6 +185,9 @@ const _fr = _Strings(
   noPrintersFound: 'Aucune imprimante trouvée',
   defaultPrinterFormat: '{name} (Par défaut)',
   copies: 'Copies',
+  pages: 'Pages',
+  allPages: 'Toutes',
+  pageRangeCustom: 'Personnalisé',
   layout: 'Mise en page',
   portrait: 'Portrait',
   landscape: 'Paysage',
@@ -200,6 +215,9 @@ const _de = _Strings(
   noPrintersFound: 'Keine Drucker gefunden',
   defaultPrinterFormat: '{name} (Standard)',
   copies: 'Kopien',
+  pages: 'Seiten',
+  allPages: 'Alle',
+  pageRangeCustom: 'Benutzerdefiniert',
   layout: 'Layout',
   portrait: 'Hochformat',
   landscape: 'Querformat',
@@ -227,6 +245,9 @@ const _es = _Strings(
   noPrintersFound: 'No se encontraron impresoras',
   defaultPrinterFormat: '{name} (Predeterminada)',
   copies: 'Copias',
+  pages: 'Páginas',
+  allPages: 'Todas',
+  pageRangeCustom: 'Personalizado',
   layout: 'Diseño',
   portrait: 'Vertical',
   landscape: 'Horizontal',
@@ -254,6 +275,9 @@ const _pt = _Strings(
   noPrintersFound: 'Nenhuma impressora encontrada',
   defaultPrinterFormat: '{name} (Padrão)',
   copies: 'Cópias',
+  pages: 'Páginas',
+  allPages: 'Todas',
+  pageRangeCustom: 'Personalizado',
   layout: 'Layout',
   portrait: 'Retrato',
   landscape: 'Paisagem',
@@ -281,6 +305,9 @@ const _it = _Strings(
   noPrintersFound: 'Nessuna stampante trovata',
   defaultPrinterFormat: '{name} (Predefinita)',
   copies: 'Copie',
+  pages: 'Pagine',
+  allPages: 'Tutte',
+  pageRangeCustom: 'Personalizzato',
   layout: 'Layout',
   portrait: 'Verticale',
   landscape: 'Orizzontale',
@@ -308,6 +335,9 @@ const _nl = _Strings(
   noPrintersFound: 'Geen printers gevonden',
   defaultPrinterFormat: '{name} (Standaard)',
   copies: 'Kopieën',
+  pages: 'Pagina\'s',
+  allPages: 'Alle',
+  pageRangeCustom: 'Aangepast',
   layout: 'Indeling',
   portrait: 'Staand',
   landscape: 'Liggend',
@@ -335,6 +365,9 @@ const _ru = _Strings(
   noPrintersFound: 'Принтеры не найдены',
   defaultPrinterFormat: '{name} (По умолчанию)',
   copies: 'Копии',
+  pages: 'Страницы',
+  allPages: 'Все',
+  pageRangeCustom: 'Выборочно',
   layout: 'Ориентация',
   portrait: 'Книжная',
   landscape: 'Альбомная',
@@ -362,6 +395,9 @@ const _pl = _Strings(
   noPrintersFound: 'Nie znaleziono drukarek',
   defaultPrinterFormat: '{name} (Domyślna)',
   copies: 'Kopie',
+  pages: 'Strony',
+  allPages: 'Wszystkie',
+  pageRangeCustom: 'Niestandardowy',
   layout: 'Układ',
   portrait: 'Pionowy',
   landscape: 'Poziomy',
@@ -389,6 +425,9 @@ const _tr = _Strings(
   noPrintersFound: 'Yazıcı bulunamadı',
   defaultPrinterFormat: '{name} (Varsayılan)',
   copies: 'Kopya',
+  pages: 'Sayfalar',
+  allPages: 'Tümü',
+  pageRangeCustom: 'Özel',
   layout: 'Yön',
   portrait: 'Dikey',
   landscape: 'Yatay',
@@ -416,6 +455,9 @@ const _ja = _Strings(
   noPrintersFound: 'プリンターが見つかりません',
   defaultPrinterFormat: '{name}（既定）',
   copies: '部数',
+  pages: 'ページ',
+  allPages: 'すべて',
+  pageRangeCustom: 'カスタム',
   layout: '印刷の向き',
   portrait: '縦',
   landscape: '横',
@@ -443,6 +485,9 @@ const _zh = _Strings(
   noPrintersFound: '未找到打印机',
   defaultPrinterFormat: '{name}（默认）',
   copies: '份数',
+  pages: '页面',
+  allPages: '全部',
+  pageRangeCustom: '自定义',
   layout: '方向',
   portrait: '纵向',
   landscape: '横向',
@@ -470,6 +515,9 @@ const _ko = _Strings(
   noPrintersFound: '프린터를 찾을 수 없습니다',
   defaultPrinterFormat: '{name} (기본값)',
   copies: '매수',
+  pages: '페이지',
+  allPages: '모두',
+  pageRangeCustom: '사용자 지정',
   layout: '방향',
   portrait: '세로',
   landscape: '가로',
@@ -497,6 +545,9 @@ const _ar = _Strings(
   noPrintersFound: 'لا توجد طابعات',
   defaultPrinterFormat: '{name} (افتراضية)',
   copies: 'النسخ',
+  pages: 'الصفحات',
+  allPages: 'الكل',
+  pageRangeCustom: 'مخصص',
   layout: 'الاتجاه',
   portrait: 'عمودي',
   landscape: 'أفقي',
