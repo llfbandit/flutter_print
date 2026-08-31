@@ -12,7 +12,10 @@ class FlutterPrint {
   ///
   /// On web, [filePath] must be a valid URL or Blob URL.
   static Future<void> print(String filePath, {PrintOptions? options}) {
-    return FlutterPrintPlatform.instance.print(filePath, options: options);
+    return FlutterPrintPlatform.instance.print(
+      filePath,
+      options: _normalize(options),
+    );
   }
 
   /// Shows a print-preview or print dialog for [filePath].
@@ -25,7 +28,7 @@ class FlutterPrint {
   }) {
     return FlutterPrintPlatform.instance.printPreview(
       filePath,
-      options: options,
+      options: _normalize(options),
       context: context,
     );
   }
@@ -58,6 +61,7 @@ class FlutterPrint {
     double dpi = 300,
     PageSize? contentSize,
   }) async {
+    options = _normalize(options);
     final bytes = await renderWidgetToPdf(
       builder: builder,
       context: context,
@@ -89,6 +93,7 @@ class FlutterPrint {
     double dpi = 300,
     PageSize? contentSize,
   }) async {
+    options = _normalize(options);
     final bytes = await renderWidgetToPdf(
       builder: builder,
       context: context,
@@ -145,6 +150,22 @@ class FlutterPrint {
   /// (Android, iOS, Web).
   static Future<List<PrinterInfo>> listPrinters() {
     return FlutterPrintPlatform.instance.listPrinters();
+  }
+
+  // Copy so the caller's options stay untouched.
+  static PrintOptions? _normalize(PrintOptions? options) {
+    final ranges = options?.pageRanges;
+    if (options == null || ranges == null || ranges.isEmpty) return options;
+    return PrintOptions(
+      printerAddress: options.printerAddress,
+      pageSize: options.pageSize,
+      margins: options.margins,
+      copies: options.copies,
+      landscape: options.landscape,
+      color: options.color,
+      duplexMode: options.duplexMode,
+      pageRanges: normalizePageRanges(ranges),
+    );
   }
 
   /// iOS-specific extensions. Returns `null` on all other platforms.

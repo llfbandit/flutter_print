@@ -187,7 +187,10 @@ class PrintOptions {
   /// pages 1–3 and 5 → `[PageRange(start: 1, end: 3), PageRange(start: 5,
   /// end: 5)]`.
   ///
-  /// When `null` or empty, all pages are printed.
+  /// When `null` or empty, all pages are printed. Ranges are sorted and merged
+  /// before printing. A range with `start < 1` or `end < start` throws an
+  /// [ArgumentError]. When no page of the document matches, printing fails
+  /// with `INVALID_PAGE_RANGE` (Windows, macOS).
   ///
   /// Platform support: Windows (PDF, image, and text files — the range is
   /// applied while rendering), macOS (PDF and image files), and Linux (via the

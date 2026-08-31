@@ -10,3 +10,4 @@ export 'src/messages.g.dart'
         PrinterCapabilities,
         PrinterInfo,
         PrintOptions;
+export 'src/page_ranges.dart';
