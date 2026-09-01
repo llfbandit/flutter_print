@@ -40,10 +40,9 @@ extension FlutterPrintPlugin {
                                         message: "Cannot open PDF", details: nil)))
         return
       }
-      // Restrict to the selected pages (all pages when unset/empty). When the
-      // selection matches nothing there is nothing to print — report success.
+      // Restrict to the selected pages (all pages when unset/empty).
       let pages = selectedPageIndices(ranges: options?.pageRanges, pageCount: doc.pageCount)
-      if pages.isEmpty { completion(.success(())); return }
+      if pages.isEmpty { completion(.failure(noPageSelectedError())); return }
       printRendered(url: fileURL, options: options, showPanel: showPanel,
                     completion: completion) { info in
         let l = self.layout(for: info)
@@ -51,9 +50,9 @@ extension FlutterPrintPlugin {
                                 paperSize: l.paper, contentRect: l.content)
       }
     } else if let image = NSImage(contentsOf: fileURL) {
-      // An image is a single page: skip it when the selection excludes page 1.
+      // An image is a single page.
       let pages = selectedPageIndices(ranges: options?.pageRanges, pageCount: 1)
-      if pages.isEmpty { completion(.success(())); return }
+      if pages.isEmpty { completion(.failure(noPageSelectedError())); return }
       printRendered(url: fileURL, options: options, showPanel: showPanel,
                     completion: completion) { info in
         let l = self.layout(for: info)
@@ -187,6 +186,11 @@ extension FlutterPrintPlugin {
       let page = Int64(idx + 1)
       return ranges.contains { page >= $0.start && page <= $0.end }
     }
+  }
+
+  private func noPageSelectedError() -> PigeonError {
+    PigeonError(code: "INVALID_PAGE_RANGE", message: "Page ranges select no page",
+                details: nil)
   }
 
   /// Paper size (already oriented by NSPrintInfo) and the content rect both
