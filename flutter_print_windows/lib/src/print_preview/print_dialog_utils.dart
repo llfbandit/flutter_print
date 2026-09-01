@@ -1,31 +1,9 @@
 import 'package:flutter_print_platform_interface/flutter_print_platform_interface.dart';
 
-extension PrintOptionsCopyWith on PrintOptions {
-  PrintOptions copyWith({
-    String? printerAddress,
-    PageSize? pageSize,
-    PageMargins? margins,
-    int? copies,
-    bool? landscape,
-    bool? color,
-    DuplexMode? duplexMode,
-    List<PageRange>? pageRanges,
-  }) => PrintOptions(
-    printerAddress: printerAddress ?? this.printerAddress,
-    pageSize: pageSize ?? this.pageSize,
-    margins: margins ?? this.margins,
-    copies: copies ?? this.copies,
-    landscape: landscape ?? this.landscape,
-    color: color ?? this.color,
-    duplexMode: duplexMode ?? this.duplexMode,
-    pageRanges: pageRanges ?? this.pageRanges,
-  );
-}
-
 /// Parses a page-range text such as `"2-6, 9, 15"`.
 ///
 /// Returns `null` when the text is blank, has a bad token, or selects a page
-/// after [pageCount].
+/// after [pageCount]. A [pageCount] of 0 means unknown: skip that check.
 List<PageRange>? parsePageRanges(String input, {required int pageCount}) {
   final ranges = <PageRange>[];
   for (final token in input.split(',')) {
@@ -42,7 +20,8 @@ List<PageRange>? parsePageRanges(String input, {required int pageCount}) {
       end = int.tryParse(part.substring(dash + 1).trim());
     }
     if (start == null || end == null) return null;
-    if (start < 1 || end < start || end > pageCount) return null;
+    if (start < 1 || end < start) return null;
+    if (pageCount > 0 && end > pageCount) return null;
     ranges.add(PageRange(start: start, end: end));
   }
   return ranges.isEmpty ? null : normalizePageRanges(ranges);

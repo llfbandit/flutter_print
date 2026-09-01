@@ -19,3 +19,7 @@ dependencies:
 
   meta: ^1.18.0
   plugin_platform_interface: ^2.0.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

@@ -11,7 +11,8 @@ class FlutterPrint {
   /// Silently prints [filePath]  using the options supplied.
   ///
   /// On web, [filePath] must be a valid URL or Blob URL.
-  static Future<void> print(String filePath, {PrintOptions? options}) {
+  // async so an invalid range fails the Future instead of throwing.
+  static Future<void> print(String filePath, {PrintOptions? options}) async {
     return FlutterPrintPlatform.instance.print(
       filePath,
       options: _normalize(options),
@@ -25,7 +26,7 @@ class FlutterPrint {
     String filePath, {
     PrintOptions? options,
     required BuildContext context,
-  }) {
+  }) async {
     return FlutterPrintPlatform.instance.printPreview(
       filePath,
       options: _normalize(options),
@@ -152,20 +153,11 @@ class FlutterPrint {
     return FlutterPrintPlatform.instance.listPrinters();
   }
 
-  // Copy so the caller's options stay untouched.
+  // copyWith keeps the caller's options untouched.
   static PrintOptions? _normalize(PrintOptions? options) {
     final ranges = options?.pageRanges;
     if (options == null || ranges == null || ranges.isEmpty) return options;
-    return PrintOptions(
-      printerAddress: options.printerAddress,
-      pageSize: options.pageSize,
-      margins: options.margins,
-      copies: options.copies,
-      landscape: options.landscape,
-      color: options.color,
-      duplexMode: options.duplexMode,
-      pageRanges: normalizePageRanges(ranges),
-    );
+    return options.copyWith(pageRanges: normalizePageRanges(ranges));
   }
 
   /// iOS-specific extensions. Returns `null` on all other platforms.
