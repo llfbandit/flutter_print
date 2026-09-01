@@ -23,23 +23,24 @@ using PageRanges = std::vector<std::pair<int, int>>;
 // Render an image file to an open printer DC using GDI+ (falls back to WIC
 // for formats GDI+ does not support, e.g. WebP, HEIC). |copies| is the number
 // of copies to emit in software (>= 1); see RenderOrFallback. An image is a
-// single page: it is emitted only when |ranges| is empty or includes page 1.
+// single page: returns INVALID_PAGE_RANGE when |ranges| excludes page 1.
 // Caller retains ownership of |hdc|.
 std::optional<FlutterError> RenderImageToDC(HDC hdc, const std::wstring& path,
                                             int copies = 1,
                                             const PageRanges& ranges = {});
 
 // Render a PDF file to an open printer DC using PDFium. Only pages selected by
-// |ranges| are emitted (all pages when empty). |copies| is the number of copies
-// to emit in software (>= 1).
+// |ranges| are emitted (all pages when empty); returns INVALID_PAGE_RANGE when
+// none match. |copies| is the number of copies to emit in software (>= 1).
 // Caller retains ownership of |hdc|.
 std::optional<FlutterError> RenderPdfToDC(HDC hdc, const std::wstring& path,
                                           int copies = 1,
                                           const PageRanges& ranges = {});
 
 // Convert |path| (plain-text file) to a PDF in memory and render it to |hdc|.
-// Only pages selected by |ranges| are emitted (all pages when empty). |copies|
-// is the number of copies to emit in software (>= 1).
+// Only pages selected by |ranges| are emitted (all pages when empty); returns
+// INVALID_PAGE_RANGE when none match. |copies| is the number of copies to emit
+// in software (>= 1).
 // Caller retains ownership of |hdc|.
 std::optional<FlutterError> RenderTextToDC(HDC hdc, const std::wstring& path,
                                            int copies = 1,

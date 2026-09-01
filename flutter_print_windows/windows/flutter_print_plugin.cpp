@@ -5,6 +5,8 @@
 #include "document_renderer.h"
 
 #include <shellapi.h>
+#include <algorithm>
+#include <climits>
 #include <thread>
 #include <unordered_set>
 
@@ -21,12 +23,15 @@ static PageRanges ExtractPageRanges(const PrintOptions* options) {
   const flutter::EncodableList* list =
       options ? options->page_ranges() : nullptr;
   if (!list) return ranges;
+  // Clamp so huge values don't wrap when narrowed to int.
+  const auto clamp = [](int64_t v) {
+    return static_cast<int>(std::clamp<int64_t>(v, 0, INT_MAX));
+  };
   for (const auto& item : *list) {
     const auto* custom = std::get_if<flutter::CustomEncodableValue>(&item);
     if (!custom) continue;
     const auto& pr = std::any_cast<const PageRange&>(*custom);
-    ranges.emplace_back(static_cast<int>(pr.start()),
-                        static_cast<int>(pr.end()));
+    ranges.emplace_back(clamp(pr.start()), clamp(pr.end()));
   }
   return ranges;
 }

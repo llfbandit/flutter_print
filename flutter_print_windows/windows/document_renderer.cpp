@@ -56,6 +56,16 @@ static bool PageSelected(int pageOneBased, const PageRanges& ranges) {
   return false;
 }
 
+// Check before StartDoc so an empty selection never spools a blank job.
+static std::optional<FlutterError> CheckAnyPageSelected(
+    int pageCount, const PageRanges& ranges) {
+  if (ranges.empty()) return std::nullopt;
+  for (int p = 1; p <= pageCount; ++p) {
+    if (PageSelected(p, ranges)) return std::nullopt;
+  }
+  return FlutterError("INVALID_PAGE_RANGE", "Page ranges select no page");
+}
+
 // Decode |path| via WIC into a 32bpp BGRA GDI+ bitmap; fallback for formats
 // GDI+ can't decode (WebP, HEIC, …). |outPixels| backs |outBmp|, so it must
 // outlive it.
@@ -165,8 +175,8 @@ std::optional<FlutterError> RenderImageToDC(HDC hdc, const std::wstring& path,
 
   if (copies < 1) copies = 1;
 
-  // An image is a single page. Nothing to print if the selection excludes it.
-  if (!PageSelected(1, ranges)) return std::nullopt;
+  // An image is a single page.
+  if (auto err = CheckAnyPageSelected(1, ranges)) return err;
 
   const int pw = GetDeviceCaps(hdc, HORZRES);
   const int ph = GetDeviceCaps(hdc, VERTRES);
@@ -236,6 +246,9 @@ static std::optional<FlutterError> DoRenderPdfDoc(HDC hdc, FPDF_DOCUMENT doc,
 
   if (copies < 1) copies = 1;
 
+  const int pageCount = FPDF_GetPageCount(doc);
+  if (auto err = CheckAnyPageSelected(pageCount, ranges)) return err;
+
   DOCINFOW di = {};
   di.cbSize      = sizeof(di);
   di.lpszDocName = docName.c_str();
@@ -243,7 +256,6 @@ static std::optional<FlutterError> DoRenderPdfDoc(HDC hdc, FPDF_DOCUMENT doc,
   std::optional<FlutterError> err;
 
   if (StartDoc(hdc, &di) > 0) {
-    const int pageCount = FPDF_GetPageCount(doc);
     for (int c = 0; c < copies; ++c) {
       for (int i = 0; i < pageCount; ++i) {
         if (!PageSelected(i + 1, ranges)) continue;
@@ -427,15 +439,17 @@ std::optional<FlutterError> RenderTextToDC(HDC hdc, const std::wstring& path,
               ? nl + 2 : nl + 1;
   }
 
+  const int total = static_cast<int>(displayLines.size());
+  const int pages = (total == 0) ? 1 : (total + linesPerPage - 1) / linesPerPage;
+
   DOCINFOW di    = {};
   di.cbSize      = sizeof(di);
   di.lpszDocName = path.c_str();
 
-  std::optional<FlutterError> err;
-  if (StartDoc(hdc, &di) > 0) {
-    const int total = static_cast<int>(displayLines.size());
-    const int pages = (total == 0) ? 1 : (total + linesPerPage - 1) / linesPerPage;
-
+  std::optional<FlutterError> err = CheckAnyPageSelected(pages, ranges);
+  if (err) {
+    // Skip printing but still release the font below.
+  } else if (StartDoc(hdc, &di) > 0) {
     for (int c = 0; c < copies; ++c) {
       for (int p = 0; p < pages; ++p) {
         if (!PageSelected(p + 1, ranges)) continue;
