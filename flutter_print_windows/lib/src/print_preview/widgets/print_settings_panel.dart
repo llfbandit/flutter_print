@@ -1,21 +1,23 @@
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_print_platform_interface/flutter_print_platform_interface.dart';
 
-import '../../windows_print_channel.dart';
 import '../l10n/print_localizations.dart';
 import '../print_dialog_utils.dart';
 
 class PrintSettingsPanel extends StatefulWidget {
   const PrintSettingsPanel({
     super.key,
-    required this.filePath,
+    required this.pageCount,
     required this.initialOptions,
     required this.onOptionsChanged,
+    required this.onPagesValidChanged,
   });
 
-  final String filePath;
+  /// PDF page count, or 0 for other files or while loading.
+  final int pageCount;
   final PrintOptions initialOptions;
   final ValueChanged<PrintOptions> onOptionsChanged;
+  final ValueChanged<bool> onPagesValidChanged;
 
   @override
   State<PrintSettingsPanel> createState() => _PrintSettingsPanelState();
@@ -25,10 +27,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
   late PrintOptions _options;
   PageSize? _customPageSize;
   PrinterCapabilities? _caps;
-
-  // Page-range selection. Only offered for multi-page (PDF) documents, so the
-  // control stays hidden until the page count is known and greater than one.
-  int _pageCount = 0;
+  List<PageRange>? _presetRanges;
 
   List<String> get _supportedPageSizeNames {
     final known = _caps?.supportedPageSizes.toSet();
@@ -94,6 +93,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
 
     final opts = widget.initialOptions;
     final ps = opts.pageSize;
+    if (opts.pageRanges?.isNotEmpty ?? false) _presetRanges = opts.pageRanges;
 
     if (ps != null && !allPageSizes.contains(ps.name)) {
       _customPageSize = ps;
@@ -107,16 +107,12 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
       color: opts.color ?? true,
       pageSize: _resolvePageSize(ps?.name ?? 'A4'),
     );
-
-    _loadPageCount();
   }
 
-  Future<void> _loadPageCount() async {
-    final mime = await WindowsPrintChannel.getMimeType(widget.filePath);
-    if (!mounted || !mimeIsPdf(mime)) return;
-    final count = await WindowsPrintChannel.getPdfPageCount(widget.filePath);
-    if (mounted) setState(() => _pageCount = count);
-  }
+  // Also show for a one-page PDF when the app preset a range, so the user can
+  // fix it.
+  bool get _showPages =>
+      widget.pageCount > 1 || (widget.pageCount == 1 && _presetRanges != null);
 
   void _emit(PrintOptions opts) {
     setState(() {
@@ -158,13 +154,18 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
               onChanged: (v) => _emit(_options.copyWith(copies: v)),
             ),
           ],
-          if (_pageCount > 1) ...[
+          if (_showPages) ...[
             const SizedBox(height: 14),
             _SectionLabel(l10n.pages),
             _PagesSelector(
-              pageCount: _pageCount,
-              onChanged: (ranges) =>
-                  _emit(_options.copyWith(pageRanges: ranges)),
+              pageCount: widget.pageCount,
+              initialRanges: _presetRanges,
+              onChanged: (ranges) {
+                widget.onPagesValidChanged(ranges != null);
+                if (ranges != null) {
+                  _emit(_options.copyWith(pageRanges: ranges));
+                }
+              },
             ),
           ],
           const SizedBox(height: 14),
@@ -333,13 +334,18 @@ class _CopiesSelector extends StatelessWidget {
 }
 
 class _PagesSelector extends StatefulWidget {
-  const _PagesSelector({required this.pageCount, required this.onChanged});
+  const _PagesSelector({
+    required this.pageCount,
+    required this.initialRanges,
+    required this.onChanged,
+  });
 
   final int pageCount;
+  final List<PageRange>? initialRanges;
 
-  /// Emits the selected ranges, or an empty list for "all pages" (which is also
-  /// used while a custom expression is blank or not yet valid).
-  final ValueChanged<List<PageRange>> onChanged;
+  /// Emits an empty list for all pages, or null when the custom text is
+  /// invalid.
+  final ValueChanged<List<PageRange>?> onChanged;
 
   @override
   State<_PagesSelector> createState() => _PagesSelectorState();
@@ -348,6 +354,21 @@ class _PagesSelector extends StatefulWidget {
 class _PagesSelectorState extends State<_PagesSelector> {
   final _controller = TextEditingController();
   bool _custom = false;
+  bool _invalid = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final ranges = widget.initialRanges;
+    if (ranges != null) {
+      _custom = true;
+      _controller.text = formatPageRanges(ranges);
+      // Check the preset against the page count once the parent is built.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _emit();
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -357,16 +378,22 @@ class _PagesSelectorState extends State<_PagesSelector> {
 
   void _emit() {
     if (!_custom) {
+      setState(() => _invalid = false);
       widget.onChanged(const []);
       return;
     }
-    final ranges = parsePageRanges(_controller.text, pageCount: widget.pageCount);
-    widget.onChanged(ranges ?? const []);
+    final ranges = parsePageRanges(
+      _controller.text,
+      pageCount: widget.pageCount,
+    );
+    setState(() => _invalid = ranges == null);
+    widget.onChanged(ranges);
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = PrintLocalizations.of(context);
+    final errorColor = FluentTheme.of(context).resources.systemFillColorCritical;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -375,7 +402,7 @@ class _PagesSelectorState extends State<_PagesSelector> {
           value: _custom,
           onChanged: (v) {
             if (v == null) return;
-            setState(() => _custom = v);
+            _custom = v;
             _emit();
           },
           items: [
@@ -389,6 +416,8 @@ class _PagesSelectorState extends State<_PagesSelector> {
             controller: _controller,
             placeholder: '2-6, 9, 15',
             keyboardType: TextInputType.text,
+            highlightColor: _invalid ? errorColor : null,
+            unfocusedColor: _invalid ? errorColor : null,
             onChanged: (_) => _emit(),
           ),
         ],

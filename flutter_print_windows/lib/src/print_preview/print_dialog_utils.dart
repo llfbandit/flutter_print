@@ -22,25 +22,19 @@ extension PrintOptionsCopyWith on PrintOptions {
   );
 }
 
-/// Parses a user-entered page-range expression such as `"2-6, 9, 15"` into a
-/// list of [PageRange]. Returns `null` when the input is blank (print all
-/// pages) or cannot be parsed into at least one valid range.
+/// Parses a page-range text such as `"2-6, 9, 15"`.
 ///
-/// [pageCount] (when > 0) clamps ranges to the document and rejects an input
-/// that selects no in-range page. Whitespace is ignored; `start` > `end` in a
-/// token is normalised by swapping.
-List<PageRange>? parsePageRanges(String input, {int pageCount = 0}) {
-  final trimmed = input.trim();
-  if (trimmed.isEmpty) return null;
-
+/// Returns `null` when the text is blank, has a bad token, or selects a page
+/// after [pageCount].
+List<PageRange>? parsePageRanges(String input, {required int pageCount}) {
   final ranges = <PageRange>[];
-  for (final token in trimmed.split(',')) {
+  for (final token in input.split(',')) {
     final part = token.trim();
     if (part.isEmpty) continue;
 
     final dash = part.indexOf('-');
-    int? start;
-    int? end;
+    final int? start;
+    final int? end;
     if (dash < 0) {
       start = end = int.tryParse(part);
     } else {
@@ -48,20 +42,16 @@ List<PageRange>? parsePageRanges(String input, {int pageCount = 0}) {
       end = int.tryParse(part.substring(dash + 1).trim());
     }
     if (start == null || end == null) return null;
-    if (start > end) {
-      final t = start;
-      start = end;
-      end = t;
-    }
-    if (start < 1) return null;
-    if (pageCount > 0) {
-      if (start > pageCount) continue;
-      if (end > pageCount) end = pageCount;
-    }
+    if (start < 1 || end < start || end > pageCount) return null;
     ranges.add(PageRange(start: start, end: end));
   }
-  return ranges.isEmpty ? null : ranges;
+  return ranges.isEmpty ? null : normalizePageRanges(ranges);
 }
+
+/// Formats [ranges] as page-range text, e.g. `"2-6, 9"`.
+String formatPageRanges(List<PageRange> ranges) => ranges
+    .map((r) => r.start == r.end ? '${r.start}' : '${r.start}-${r.end}')
+    .join(', ');
 
 bool mimeIsPdf(String mime) => mime == 'application/pdf';
 bool mimeIsImage(String mime) => mime.startsWith('image/');

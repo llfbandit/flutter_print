@@ -58,6 +58,7 @@ Future<void> showWindowsPrintDialog(
             reverseTransitionDuration: Duration.zero,
             pageBuilder: (_, _, _) => _PrintDialog(
               filePath: filePath,
+              mimeType: mime,
               initialOptions: initialOptions,
             ),
           ),
@@ -92,9 +93,14 @@ FluentThemeData _buildTheme(Brightness brightness) {
 // ---------------------------------------------------------------------------
 
 class _PrintDialog extends StatefulWidget {
-  const _PrintDialog({required this.filePath, this.initialOptions});
+  const _PrintDialog({
+    required this.filePath,
+    required this.mimeType,
+    this.initialOptions,
+  });
 
   final String filePath;
+  final String mimeType;
   final PrintOptions? initialOptions;
 
   @override
@@ -106,11 +112,30 @@ class _PrintDialogState extends State<_PrintDialog> {
 
   late PrintOptions _options;
   bool _printing = false;
+  bool _pagesValid = true;
+
+  // PDF page count, loaded once for both panels. Null while loading.
+  int? _pageCount;
 
   @override
   void initState() {
     super.initState();
     _options = widget.initialOptions ?? PrintOptions();
+    if (mimeIsPdf(widget.mimeType)) {
+      _loadPageCount();
+    } else {
+      _pageCount = 0;
+    }
+  }
+
+  Future<void> _loadPageCount() async {
+    var count = 0;
+    try {
+      count = await WindowsPrintChannel.getPdfPageCount(widget.filePath);
+    } catch (_) {
+      // Show the preview as unavailable.
+    }
+    if (mounted) setState(() => _pageCount = count);
   }
 
   @override
@@ -133,9 +158,11 @@ class _PrintDialogState extends State<_PrintDialog> {
             SizedBox(
               width: 260,
               child: PrintSettingsPanel(
-                filePath: widget.filePath,
+                pageCount: _pageCount ?? 0,
                 initialOptions: _options,
                 onOptionsChanged: (opts) => setState(() => _options = opts),
+                onPagesValidChanged: (valid) =>
+                    setState(() => _pagesValid = valid),
               ),
             ),
             const SizedBox(width: 16),
@@ -147,6 +174,8 @@ class _PrintDialogState extends State<_PrintDialog> {
             Expanded(
               child: PrintPreviewPanel(
                 filePath: widget.filePath,
+                mimeType: widget.mimeType,
+                pageCount: _pageCount,
                 options: _options,
               ),
             ),
@@ -161,7 +190,8 @@ class _PrintDialogState extends State<_PrintDialog> {
           child: Text(l10n.cancel),
         ),
         FilledButton(
-          onPressed: (!_printing && _options.printerAddress != null)
+          onPressed:
+              (!_printing && _pagesValid && _options.printerAddress != null)
               ? _print
               : null,
           child: Text(l10n.print),
@@ -171,7 +201,7 @@ class _PrintDialogState extends State<_PrintDialog> {
   }
 
   Future<void> _print() async {
-    if (_options.printerAddress == null) return;
+    if (_options.printerAddress == null || !_pagesValid) return;
     setState(() => _printing = true);
     if (mounted) Navigator.of(context, rootNavigator: true).pop();
     try {
