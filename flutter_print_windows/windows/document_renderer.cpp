@@ -60,9 +60,10 @@ static bool PageSelected(int pageOneBased, const PageRanges& ranges) {
 static std::optional<FlutterError> CheckAnyPageSelected(
     int pageCount, const PageRanges& ranges) {
   if (ranges.empty()) return std::nullopt;
-  for (int p = 1; p <= pageCount; ++p) {
-    if (PageSelected(p, ranges)) return std::nullopt;
-  }
+  const bool any = std::any_of(ranges.begin(), ranges.end(), [&](const auto& r) {
+    return r.first <= r.second && r.first <= pageCount && r.second >= 1;
+  });
+  if (any) return std::nullopt;
   return FlutterError("INVALID_PAGE_RANGE", "Page ranges select no page");
 }
 
