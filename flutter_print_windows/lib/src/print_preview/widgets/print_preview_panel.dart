@@ -25,10 +25,16 @@ class PrintPreviewPanel extends StatefulWidget {
   const PrintPreviewPanel({
     super.key,
     required this.filePath,
+    required this.mimeType,
+    required this.pageCount,
     required this.options,
   });
 
   final String filePath;
+  final String mimeType;
+
+  /// PDF page count, or null while loading.
+  final int? pageCount;
   final PrintOptions options;
 
   @override
@@ -36,33 +42,22 @@ class PrintPreviewPanel extends StatefulWidget {
 }
 
 class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
-  String? _mimeType;
   PageMargins? _minimumMargins;
 
   @override
   void initState() {
     super.initState();
-    _loadMimeType();
     _fetchMinimumMargins();
   }
 
   @override
   void didUpdateWidget(PrintPreviewPanel old) {
     super.didUpdateWidget(old);
-    if (old.filePath != widget.filePath) {
-      setState(() => _mimeType = null);
-      _loadMimeType();
-    }
     if (old.options.printerAddress != widget.options.printerAddress ||
         old.options.pageSize != widget.options.pageSize ||
         old.options.landscape != widget.options.landscape) {
       _fetchMinimumMargins();
     }
-  }
-
-  Future<void> _loadMimeType() async {
-    final mime = await WindowsPrintChannel.getMimeType(widget.filePath);
-    if (mounted) setState(() => _mimeType = mime);
   }
 
   Future<void> _fetchMinimumMargins() async {
@@ -86,7 +81,7 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final mime = _mimeType;
+    final mime = widget.mimeType;
     final double w = widget.options.pageSize?.width ?? 210.0;
     final double h = widget.options.pageSize?.height ?? 297.0;
     final bool landscape = widget.options.landscape ?? false;
@@ -94,28 +89,16 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
     final double paperH = landscape ? w : h;
     final double paperAspect = paperW / paperH;
 
-    if (mime == null) {
-      return Column(
-        children: [
-          _PaperShell(
-            paperAspect: paperAspect,
-            paperWidthMm: paperW,
-            paperHeightMm: paperH,
-            minimumMargins: _minimumMargins,
-            child: const Center(child: ProgressRing()),
-          ),
-        ],
-      );
-    }
-
     if (mimeIsPdf(mime)) {
       return _PrintPdfPreview(
         filePath: widget.filePath,
+        pageCount: widget.pageCount,
         paperAspect: paperAspect,
         paperWidthMm: paperW,
         paperHeightMm: paperH,
         minimumMargins: _minimumMargins,
         color: widget.options.color ?? true,
+        pageRanges: widget.options.pageRanges,
       );
     }
 
@@ -223,19 +206,23 @@ class _PaperShell extends StatelessWidget {
 class _PrintPdfPreview extends StatefulWidget {
   const _PrintPdfPreview({
     required this.filePath,
+    required this.pageCount,
     required this.paperAspect,
     required this.paperWidthMm,
     required this.paperHeightMm,
     required this.minimumMargins,
     required this.color,
+    required this.pageRanges,
   });
 
   final String filePath;
+  final int? pageCount;
   final double paperAspect;
   final double paperWidthMm;
   final double paperHeightMm;
   final PageMargins? minimumMargins;
   final bool color;
+  final List<PageRange>? pageRanges;
 
   @override
   State<_PrintPdfPreview> createState() => _PrintPdfPreviewState();
@@ -243,60 +230,115 @@ class _PrintPdfPreview extends StatefulWidget {
 
 class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
   Uint8List? _previewImg;
-  int _currentPage = 0;
-  int _pageCount = 1;
+
+  /// 0-based document page indices to preview, in output order — mirrors the
+  /// selection sent to the printer so the preview only pages through what will
+  /// actually be printed. Empty until the page count is known.
+  List<int> _selected = const [];
+
+  /// Position within [_selected] currently shown.
+  int _pos = 0;
   bool _loadingPreview = false;
+
+  // Drop renders that finish after a newer request.
+  int _request = 0;
+
+  int get _pageCount => widget.pageCount ?? 0;
 
   @override
   void initState() {
     super.initState();
-    _loadPdfPreview(0);
+    _recomputeSelection();
+    _startRender();
   }
 
   @override
   void didUpdateWidget(_PrintPdfPreview old) {
     super.didUpdateWidget(old);
     if (old.filePath != widget.filePath) {
-      _currentPage = 0;
-      _pageCount = 1;
-      _loadPdfPreview(0);
+      _pos = 0;
+      _recomputeSelection();
+      _startRender();
+    } else if (old.pageCount != widget.pageCount ||
+        !_sameRanges(old.pageRanges, widget.pageRanges)) {
+      final shown = _selected.isEmpty ? null : _selected[_pos];
+      _recomputeSelection();
+      // Keep the current page when it is still selected.
+      final idx = shown == null ? -1 : _selected.indexOf(shown);
+      if (idx >= 0) {
+        _pos = idx;
+      } else {
+        _startRender();
+      }
     }
   }
 
-  Future<void> _loadPdfPreview(int pageIndex) async {
-    setState(() {
-      _loadingPreview = true;
-      _previewImg = null;
-    });
+  bool _sameRanges(List<PageRange>? a, List<PageRange>? b) {
+    if (a == null || a.isEmpty) return b == null || b.isEmpty;
+    if (b == null || b.length != a.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].start != b[i].start || a[i].end != b[i].end) return false;
+    }
+    return true;
+  }
+
+  /// Rebuilds [_selected] from the current page count and requested ranges
+  /// (all pages when unset/empty) and clamps [_pos] into the new list.
+  void _recomputeSelection() {
+    final ranges = widget.pageRanges;
+    if (_pageCount <= 0) {
+      _selected = const [];
+    } else if (ranges == null || ranges.isEmpty) {
+      _selected = List<int>.generate(_pageCount, (i) => i);
+    } else {
+      _selected = [
+        for (var i = 0; i < _pageCount; i++)
+          if (ranges.any((r) => i + 1 >= r.start && i + 1 <= r.end)) i,
+      ];
+    }
+    if (_pos >= _selected.length) _pos = _selected.isEmpty ? 0 : _selected.length - 1;
+  }
+
+  // Start rendering the page at [_pos]. The caller rebuilds.
+  void _startRender() {
+    final request = ++_request;
+    _previewImg = null;
+    _loadingPreview = _selected.isNotEmpty;
+    if (_loadingPreview) _render(request, _selected[_pos]);
+  }
+
+  Future<void> _render(int request, int page) async {
+    Uint8List? img;
     try {
-      if (_pageCount <= 1) {
-        _pageCount = await WindowsPrintChannel.getPdfPageCount(widget.filePath);
-      }
-      final img = await WindowsPrintChannel.renderPdfPageToPng(
+      img = await WindowsPrintChannel.renderPdfPageToPng(
         widget.filePath,
-        pageIndex,
+        page,
         150.0,
       );
-      if (!mounted) return;
-      setState(() {
-        _previewImg = img;
-        _loadingPreview = false;
-      });
     } catch (_) {
-      if (mounted) setState(() => _loadingPreview = false);
+      // Show the preview as unavailable.
     }
+    if (!mounted || request != _request) return;
+    setState(() {
+      _previewImg = img;
+      _loadingPreview = false;
+    });
   }
 
-  Future<void> _navigatePage(int delta) async {
-    final next = (_currentPage + delta).clamp(0, _pageCount - 1);
-    if (next == _currentPage) return;
-    _currentPage = next;
-    await _loadPdfPreview(_currentPage);
+  void _navigatePage(int delta) {
+    final next = (_pos + delta).clamp(0, _selected.length - 1);
+    if (next == _pos) return;
+    setState(() {
+      _pos = next;
+      _startRender();
+    });
   }
 
   Widget _buildContent(BuildContext context) {
     final l10n = PrintLocalizations.of(context);
-    if (_loadingPreview) return const Center(child: ProgressRing());
+    if (_loadingPreview || widget.pageCount == null) {
+      return const Center(child: ProgressRing());
+    }
     if (_previewImg != null) {
       Widget img = Image.memory(
         _previewImg!,
@@ -322,7 +364,7 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
           minimumMargins: widget.minimumMargins,
           child: _buildContent(context),
         ),
-        if (_pageCount > 1)
+        if (_selected.length > 1)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Row(
@@ -330,16 +372,22 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
               children: [
                 IconButton(
                   icon: const Icon(FluentIcons.chevron_left),
-                  onPressed: (!_loadingPreview && _currentPage > 0)
+                  onPressed: (!_loadingPreview && _pos > 0)
                       ? () => _navigatePage(-1)
                       : null,
                 ),
                 const SizedBox(width: 8),
-                Text('${_currentPage + 1} / $_pageCount'),
+                // Show the printed page number, plus its position in the
+                // selection when a custom range is active.
+                Text(
+                  _selected.length == _pageCount
+                      ? '${_selected[_pos] + 1} / $_pageCount'
+                      : '${_selected[_pos] + 1} (${_pos + 1} / ${_selected.length})',
+                ),
                 const SizedBox(width: 8),
                 IconButton(
                   icon: const Icon(FluentIcons.chevron_right),
-                  onPressed: (!_loadingPreview && _currentPage < _pageCount - 1)
+                  onPressed: (!_loadingPreview && _pos < _selected.length - 1)
                       ? () => _navigatePage(1)
                       : null,
                 ),

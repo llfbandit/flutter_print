@@ -46,6 +46,27 @@ static void EnsureGdiplusInit() {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+// True when |pageOneBased| falls within any of |ranges|, or |ranges| is empty
+// (empty means "all pages").
+static bool PageSelected(int pageOneBased, const PageRanges& ranges) {
+  if (ranges.empty()) return true;
+  for (const auto& r : ranges) {
+    if (pageOneBased >= r.first && pageOneBased <= r.second) return true;
+  }
+  return false;
+}
+
+// Check before StartDoc so an empty selection never spools a blank job.
+static std::optional<FlutterError> CheckAnyPageSelected(
+    int pageCount, const PageRanges& ranges) {
+  if (ranges.empty()) return std::nullopt;
+  const bool any = std::any_of(ranges.begin(), ranges.end(), [&](const auto& r) {
+    return r.first <= r.second && r.first <= pageCount && r.second >= 1;
+  });
+  if (any) return std::nullopt;
+  return FlutterError("INVALID_PAGE_RANGE", "Page ranges select no page");
+}
+
 // Decode |path| via WIC into a 32bpp BGRA GDI+ bitmap; fallback for formats
 // GDI+ can't decode (WebP, HEIC, …). |outPixels| backs |outBmp|, so it must
 // outlive it.
@@ -149,10 +170,14 @@ static HRESULT GetEncoderClsid(const WCHAR* mimeType, CLSID* pClsid) {
 // ---------------------------------------------------------------------------
 
 std::optional<FlutterError> RenderImageToDC(HDC hdc, const std::wstring& path,
-                                            int copies) {
+                                            int copies,
+                                            const PageRanges& ranges) {
   EnsureGdiplusInit();
 
   if (copies < 1) copies = 1;
+
+  // An image is a single page.
+  if (auto err = CheckAnyPageSelected(1, ranges)) return err;
 
   const int pw = GetDeviceCaps(hdc, HORZRES);
   const int ph = GetDeviceCaps(hdc, VERTRES);
@@ -206,11 +231,13 @@ std::optional<FlutterError> RenderImageToDC(HDC hdc, const std::wstring& path,
 // Internal PDF render helper
 // ---------------------------------------------------------------------------
 
-// Render all pages of |doc| to |hdc|, |copies| times.
+// Render the pages of |doc| selected by |ranges| to |hdc|, |copies| times
+// (all pages when |ranges| is empty).
 // Caller must hold g_pdfium_mtx and have called FPDF_InitLibraryWithConfig.
 static std::optional<FlutterError> DoRenderPdfDoc(HDC hdc, FPDF_DOCUMENT doc,
                                                    const std::wstring& docName,
-                                                   int copies) {
+                                                   int copies,
+                                                   const PageRanges& ranges) {
   const double dpiX = static_cast<double>(GetDeviceCaps(hdc, LOGPIXELSX)) / 72.0;
   const double dpiY = static_cast<double>(GetDeviceCaps(hdc, LOGPIXELSY)) / 72.0;
   const int physW      = GetDeviceCaps(hdc, PHYSICALWIDTH);
@@ -220,6 +247,9 @@ static std::optional<FlutterError> DoRenderPdfDoc(HDC hdc, FPDF_DOCUMENT doc,
 
   if (copies < 1) copies = 1;
 
+  const int pageCount = FPDF_GetPageCount(doc);
+  if (auto err = CheckAnyPageSelected(pageCount, ranges)) return err;
+
   DOCINFOW di = {};
   di.cbSize      = sizeof(di);
   di.lpszDocName = docName.c_str();
@@ -227,9 +257,9 @@ static std::optional<FlutterError> DoRenderPdfDoc(HDC hdc, FPDF_DOCUMENT doc,
   std::optional<FlutterError> err;
 
   if (StartDoc(hdc, &di) > 0) {
-    const int pageCount = FPDF_GetPageCount(doc);
     for (int c = 0; c < copies; ++c) {
       for (int i = 0; i < pageCount; ++i) {
+        if (!PageSelected(i + 1, ranges)) continue;
         FPDF_PAGE page = FPDF_LoadPage(doc, i);
         if (!page) continue;
 
@@ -259,7 +289,8 @@ static std::optional<FlutterError> DoRenderPdfDoc(HDC hdc, FPDF_DOCUMENT doc,
 }
 
 std::optional<FlutterError> RenderPdfToDC(HDC hdc, const std::wstring& path,
-                                          int copies) {
+                                          int copies,
+                                          const PageRanges& ranges) {
   EnsurePdfiumInit();
   std::lock_guard<std::mutex> lock(g_pdfium_mtx);
 
@@ -268,7 +299,7 @@ std::optional<FlutterError> RenderPdfToDC(HDC hdc, const std::wstring& path,
   if (!doc)
     return FlutterError("PDF_ERROR", "Cannot open PDF: " + utf8);
 
-  auto err = DoRenderPdfDoc(hdc, doc, path, copies);
+  auto err = DoRenderPdfDoc(hdc, doc, path, copies, ranges);
   FPDF_CloseDocument(doc);
   return err;
 }
@@ -335,7 +366,8 @@ std::wstring ReadTextFile(const std::wstring& path) {
 }
 
 std::optional<FlutterError> RenderTextToDC(HDC hdc, const std::wstring& path,
-                                           int copies) {
+                                           int copies,
+                                           const PageRanges& ranges) {
   if (copies < 1) copies = 1;
   const std::wstring text = DecodeTextBytes(ReadAllBytes(path));
 
@@ -408,17 +440,20 @@ std::optional<FlutterError> RenderTextToDC(HDC hdc, const std::wstring& path,
               ? nl + 2 : nl + 1;
   }
 
+  const int total = static_cast<int>(displayLines.size());
+  const int pages = (total == 0) ? 1 : (total + linesPerPage - 1) / linesPerPage;
+
   DOCINFOW di    = {};
   di.cbSize      = sizeof(di);
   di.lpszDocName = path.c_str();
 
-  std::optional<FlutterError> err;
-  if (StartDoc(hdc, &di) > 0) {
-    const int total = static_cast<int>(displayLines.size());
-    const int pages = (total == 0) ? 1 : (total + linesPerPage - 1) / linesPerPage;
-
+  std::optional<FlutterError> err = CheckAnyPageSelected(pages, ranges);
+  if (err) {
+    // Skip printing but still release the font below.
+  } else if (StartDoc(hdc, &di) > 0) {
     for (int c = 0; c < copies; ++c) {
       for (int p = 0; p < pages; ++p) {
+        if (!PageSelected(p + 1, ranges)) continue;
         if (StartPage(hdc) <= 0) continue;
         const int first = p * linesPerPage;
         const int end   = std::min(first + linesPerPage, total);
@@ -445,19 +480,20 @@ std::optional<FlutterError> RenderOrFallback(HDC hdc,
                                               const std::wstring& wPath,
                                               const std::string& mime,
                                               const std::wstring& printerName,
-                                              int copies) {
+                                              int copies,
+                                              const PageRanges& ranges) {
   if (mime.rfind("image/", 0) == 0) {
-    auto err = RenderImageToDC(hdc, wPath, copies);
+    auto err = RenderImageToDC(hdc, wPath, copies, ranges);
     DeleteDC(hdc);
     return err;
   }
   if (mime == "application/pdf") {
-    auto err = RenderPdfToDC(hdc, wPath, copies);
+    auto err = RenderPdfToDC(hdc, wPath, copies, ranges);
     DeleteDC(hdc);
     return err;
   }
   if (mime.rfind("text/", 0) == 0) {
-    auto err = RenderTextToDC(hdc, wPath, copies);
+    auto err = RenderTextToDC(hdc, wPath, copies, ranges);
     DeleteDC(hdc);
     return err;
   }

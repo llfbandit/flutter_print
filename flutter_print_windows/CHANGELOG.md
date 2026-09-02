@@ -1,3 +1,9 @@
+## 0.3.0
+* feat: Add page range print option (PDF, image, text).
+* feat: Add Pages selector to the print dialog.
+* feat: Fail with INVALID_PAGE_RANGE when no page matches.
+* fix: Report print errors from printPreview.
+
 ## 0.2.0
 * feat: Make print options nullable to get system defaults.
 * fix: Decode image once not per copy.

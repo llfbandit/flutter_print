@@ -5,11 +5,16 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "messages.h"
 
 namespace flutter_print {
+
+// One or more 1-based, inclusive page ranges (e.g. {{2, 6}, {9, 9}} for pages
+// 2–6 and 9). An empty vector means "all pages".
+using PageRanges = std::vector<std::pair<int, int>>;
 
 // ---------------------------------------------------------------------------
 // Print rendering — image and PDF to a printer DC
@@ -17,34 +22,43 @@ namespace flutter_print {
 
 // Render an image file to an open printer DC using GDI+ (falls back to WIC
 // for formats GDI+ does not support, e.g. WebP, HEIC). |copies| is the number
-// of copies to emit in software (>= 1); see RenderOrFallback.
+// of copies to emit in software (>= 1); see RenderOrFallback. An image is a
+// single page: returns INVALID_PAGE_RANGE when |ranges| excludes page 1.
 // Caller retains ownership of |hdc|.
 std::optional<FlutterError> RenderImageToDC(HDC hdc, const std::wstring& path,
-                                            int copies = 1);
+                                            int copies = 1,
+                                            const PageRanges& ranges = {});
 
-// Render all pages of a PDF file to an open printer DC using PDFium.
-// |copies| is the number of copies to emit in software (>= 1).
+// Render a PDF file to an open printer DC using PDFium. Only pages selected by
+// |ranges| are emitted (all pages when empty); returns INVALID_PAGE_RANGE when
+// none match. |copies| is the number of copies to emit in software (>= 1).
 // Caller retains ownership of |hdc|.
 std::optional<FlutterError> RenderPdfToDC(HDC hdc, const std::wstring& path,
-                                          int copies = 1);
+                                          int copies = 1,
+                                          const PageRanges& ranges = {});
 
 // Convert |path| (plain-text file) to a PDF in memory and render it to |hdc|.
-// |copies| is the number of copies to emit in software (>= 1).
+// Only pages selected by |ranges| are emitted (all pages when empty); returns
+// INVALID_PAGE_RANGE when none match. |copies| is the number of copies to emit
+// in software (>= 1).
 // Caller retains ownership of |hdc|.
 std::optional<FlutterError> RenderTextToDC(HDC hdc, const std::wstring& path,
-                                           int copies = 1);
+                                           int copies = 1,
+                                           const PageRanges& ranges = {});
 
 // Routes |wPath| to the appropriate renderer based on file extension, or
 // falls back to ShellExecuteW "printto" for unsupported types.
 // Takes ownership of |hdc| — always calls DeleteDC before returning.
 // |copies| is the number of copies the driver could NOT replicate natively and
 // that must therefore be emitted in software (1 when the driver handles them).
-// The ShellExecuteW fallback path does not honour |copies|.
+// |ranges| restricts which pages are printed (all pages when empty).
+// The ShellExecuteW fallback path honours neither |copies| nor |ranges|.
 std::optional<FlutterError> RenderOrFallback(HDC hdc,
                                               const std::wstring& wPath,
                                               const std::string& mime,
                                               const std::wstring& printerName,
-                                              int copies = 1);
+                                              int copies = 1,
+                                              const PageRanges& ranges = {});
 
 // ---------------------------------------------------------------------------
 // Preview rendering — for the Flutter Windows print dialog

@@ -1,6 +1,6 @@
 name: flutter_print_windows
 description: Windows implementation of the flutter_print plugin.
-version: 0.2.0
+version: 0.3.0
 homepage: https://github.com/llfbandit/flutter_print/tree/main/flutter_print_windows
 
 resolution: workspace
@@ -18,7 +18,7 @@ dependencies:
   flutter:
     sdk: flutter
   fluent_ui: ^4.9.0
-  flutter_print_platform_interface: ^0.2.0
+  flutter_print_platform_interface: ^0.3.0
 
 dev_dependencies:
   flutter_test:

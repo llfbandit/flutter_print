@@ -11,8 +11,12 @@ class FlutterPrint {
   /// Silently prints [filePath]  using the options supplied.
   ///
   /// On web, [filePath] must be a valid URL or Blob URL.
-  static Future<void> print(String filePath, {PrintOptions? options}) {
-    return FlutterPrintPlatform.instance.print(filePath, options: options);
+  // async so an invalid range fails the Future instead of throwing.
+  static Future<void> print(String filePath, {PrintOptions? options}) async {
+    return FlutterPrintPlatform.instance.print(
+      filePath,
+      options: _normalize(options),
+    );
   }
 
   /// Shows a print-preview or print dialog for [filePath].
@@ -22,10 +26,10 @@ class FlutterPrint {
     String filePath, {
     PrintOptions? options,
     required BuildContext context,
-  }) {
+  }) async {
     return FlutterPrintPlatform.instance.printPreview(
       filePath,
-      options: options,
+      options: _normalize(options),
       context: context,
     );
   }
@@ -58,6 +62,7 @@ class FlutterPrint {
     double dpi = 300,
     PageSize? contentSize,
   }) async {
+    options = _normalize(options);
     final bytes = await renderWidgetToPdf(
       builder: builder,
       context: context,
@@ -89,6 +94,7 @@ class FlutterPrint {
     double dpi = 300,
     PageSize? contentSize,
   }) async {
+    options = _normalize(options);
     final bytes = await renderWidgetToPdf(
       builder: builder,
       context: context,
@@ -145,6 +151,13 @@ class FlutterPrint {
   /// (Android, iOS, Web).
   static Future<List<PrinterInfo>> listPrinters() {
     return FlutterPrintPlatform.instance.listPrinters();
+  }
+
+  // copyWith keeps the caller's options untouched.
+  static PrintOptions? _normalize(PrintOptions? options) {
+    final ranges = options?.pageRanges;
+    if (options == null || ranges == null || ranges.isEmpty) return options;
+    return options.copyWith(pageRanges: normalizePageRanges(ranges));
   }
 
   /// iOS-specific extensions. Returns `null` on all other platforms.

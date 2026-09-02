@@ -5,6 +5,8 @@
 #include "document_renderer.h"
 
 #include <shellapi.h>
+#include <algorithm>
+#include <climits>
 #include <thread>
 #include <unordered_set>
 
@@ -12,6 +14,27 @@
 #pragma comment(lib, "shell32.lib")
 
 namespace flutter_print {
+
+// Converts the pageRanges field of |options| (a list of PageRange) into the
+// PageRanges vector the renderers expect. Returns an empty vector (= all pages)
+// when unset or empty.
+static PageRanges ExtractPageRanges(const PrintOptions* options) {
+  PageRanges ranges;
+  const flutter::EncodableList* list =
+      options ? options->page_ranges() : nullptr;
+  if (!list) return ranges;
+  // Clamp so huge values don't wrap when narrowed to int.
+  const auto clamp = [](int64_t v) {
+    return static_cast<int>(std::clamp<int64_t>(v, 0, INT_MAX));
+  };
+  for (const auto& item : *list) {
+    const auto* custom = std::get_if<flutter::CustomEncodableValue>(&item);
+    if (!custom) continue;
+    const auto& pr = std::any_cast<const PageRange&>(*custom);
+    ranges.emplace_back(clamp(pr.start()), clamp(pr.end()));
+  }
+  return ranges;
+}
 
 // ---------------------------------------------------------------------------
 // C API — called by the Flutter engine at startup
@@ -111,7 +134,8 @@ std::optional<FlutterError> FlutterPrintPlugin::PrintInternal(
       return FlutterError("PRINTER_ERROR",
                           "Cannot create printer DC for: " +
                               WideToUtf8(wPrinter.c_str()));
-    return RenderOrFallback(hdc, wPath, mime, wPrinter, softwareCopies);
+    return RenderOrFallback(hdc, wPath, mime, wPrinter, softwareCopies,
+                            ExtractPageRanges(options));
   }
 
   // Other file types: delegate to the file's associated application.

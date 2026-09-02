@@ -37,13 +37,18 @@ class ImagePrintView: NSView {
 
 class PDFPagePrintView: NSView {
   let document: PDFDocument
+  /// 0-based indices of the document pages to print, in output order. Lets the
+  /// print job skip pages (and support discontinuous selections like 2–6,9,15)
+  /// while NSView still sees a contiguous 1..pages.count range.
+  private let pages: [Int]
   /// Area within the sheet each page is scaled into (paper size minus the
   /// requested margins), in the view's coordinate system.
   private let contentRect: NSRect
   private var currentPage = 0
 
-  init(document: PDFDocument, paperSize: NSSize, contentRect: NSRect) {
+  init(document: PDFDocument, pages: [Int], paperSize: NSSize, contentRect: NSRect) {
     self.document = document
+    self.pages = pages
     self.contentRect = contentRect
     super.init(frame: NSRect(origin: .zero, size: paperSize))
   }
@@ -51,12 +56,13 @@ class PDFPagePrintView: NSView {
   required init?(coder: NSCoder) { fatalError() }
 
   override func knowsPageRange(_ range: NSRangePointer) -> Bool {
-    range.pointee = NSMakeRange(1, document.pageCount)
+    range.pointee = NSMakeRange(1, pages.count)
     return true
   }
 
   override func rectForPage(_ page: Int) -> NSRect {
-    currentPage = page - 1
+    // `page` is the 1-based output position; map it to the document page index.
+    currentPage = pages[page - 1]
     return bounds
   }
 

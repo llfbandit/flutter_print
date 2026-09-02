@@ -1,3 +1,8 @@
+## 0.5.0
+* feat: Add page range print option (Windows, macOS, Linux).
+* feat: Sort and merge page ranges. Throw ArgumentError on invalid ranges.
+* feat(macos): Fail with INVALID_PAGE_RANGE when no page matches.
+
 ## 0.4.0
 * feat: Make print options nullable to get system defaults.
 * feat(android): Implement image print.

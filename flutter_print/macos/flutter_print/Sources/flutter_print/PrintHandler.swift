@@ -33,6 +33,8 @@ extension FlutterPrintPlugin {
 
     let fileURL = URL(fileURLWithPath: filePath)
     let ext = fileURL.pathExtension.lowercased()
+    // Without ranges an empty PDF is not a range error.
+    let hasRanges = !(options?.pageRanges?.isEmpty ?? true)
 
     if ext == "pdf" {
       guard let doc = PDFDocument(url: fileURL) else {
@@ -40,12 +42,19 @@ extension FlutterPrintPlugin {
                                         message: "Cannot open PDF", details: nil)))
         return
       }
+      // Restrict to the selected pages (all pages when unset/empty).
+      let pages = selectedPageIndices(ranges: options?.pageRanges, pageCount: doc.pageCount)
+      if pages.isEmpty && hasRanges { completion(.failure(noPageSelectedError())); return }
       printRendered(url: fileURL, options: options, showPanel: showPanel,
                     completion: completion) { info in
         let l = self.layout(for: info)
-        return PDFPagePrintView(document: doc, paperSize: l.paper, contentRect: l.content)
+        return PDFPagePrintView(document: doc, pages: pages,
+                                paperSize: l.paper, contentRect: l.content)
       }
     } else if let image = NSImage(contentsOf: fileURL) {
+      // An image is a single page.
+      let pages = selectedPageIndices(ranges: options?.pageRanges, pageCount: 1)
+      if pages.isEmpty && hasRanges { completion(.failure(noPageSelectedError())); return }
       printRendered(url: fileURL, options: options, showPanel: showPanel,
                     completion: completion) { info in
         let l = self.layout(for: info)
@@ -169,6 +178,23 @@ extension FlutterPrintPlugin {
     return info
   }
 
+  /// Resolves [ranges] into a sorted list of 0-based document page indices to
+  /// print. Returns every page (`0..<pageCount`) when [ranges] is nil or empty,
+  /// and an empty array when the selection matches no page in the document.
+  private func selectedPageIndices(ranges: [PageRange]?, pageCount: Int) -> [Int] {
+    guard pageCount > 0 else { return [] }
+    guard let ranges, !ranges.isEmpty else { return Array(0..<pageCount) }
+    return (0..<pageCount).filter { idx in
+      let page = Int64(idx + 1)
+      return ranges.contains { page >= $0.start && page <= $0.end }
+    }
+  }
+
+  private func noPageSelectedError() -> PigeonError {
+    PigeonError(code: "INVALID_PAGE_RANGE", message: "Page ranges select no page",
+                details: nil)
+  }
+
   /// Paper size (already oriented by NSPrintInfo) and the content rect both
   /// custom print views draw into (paper minus the requested margins).
   private func layout(for info: NSPrintInfo) -> (paper: NSSize, content: NSRect) {
@@ -266,6 +292,9 @@ extension FlutterPrintPlugin {
       case .shortEdge: args += ["-o", "sides=two-sided-short-edge"]
       }
     }
+    if let pageRanges = cupsPageRanges(options?.pageRanges) {
+      args += ["-o", "page-ranges=\(pageRanges)"]
+    }
     let mmToPts = 72.0 / 25.4
     if let ps = options?.pageSize {
       if !ps.name.isEmpty {
@@ -301,6 +330,14 @@ extension FlutterPrintPlugin {
       process.waitUntilExit()
       completion(.completed(process.terminationStatus))
     }
+  }
+
+  /// Formats [ranges] as a CUPS `page-ranges` value (e.g. `"2-6,9,15"`).
+  /// Returns nil when the selection is unset or empty (print all pages).
+  private func cupsPageRanges(_ ranges: [PageRange]?) -> String? {
+    guard let ranges, !ranges.isEmpty else { return nil }
+    return ranges.map { $0.start == $0.end ? "\($0.start)" : "\($0.start)-\($0.end)" }
+      .joined(separator: ",")
   }
 
   @discardableResult

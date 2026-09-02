@@ -7,12 +7,17 @@ import '../print_dialog_utils.dart';
 class PrintSettingsPanel extends StatefulWidget {
   const PrintSettingsPanel({
     super.key,
+    required this.pageCount,
     required this.initialOptions,
     required this.onOptionsChanged,
+    required this.onPagesValidChanged,
   });
 
+  /// Null while loading, 0 when unknown.
+  final int? pageCount;
   final PrintOptions initialOptions;
   final ValueChanged<PrintOptions> onOptionsChanged;
+  final ValueChanged<bool> onPagesValidChanged;
 
   @override
   State<PrintSettingsPanel> createState() => _PrintSettingsPanelState();
@@ -22,6 +27,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
   late PrintOptions _options;
   PageSize? _customPageSize;
   PrinterCapabilities? _caps;
+  List<PageRange>? _presetRanges;
 
   List<String> get _supportedPageSizeNames {
     final known = _caps?.supportedPageSizes.toSet();
@@ -87,6 +93,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
 
     final opts = widget.initialOptions;
     final ps = opts.pageSize;
+    if (opts.pageRanges?.isNotEmpty ?? false) _presetRanges = opts.pageRanges;
 
     if (ps != null && !allPageSizes.contains(ps.name)) {
       _customPageSize = ps;
@@ -100,6 +107,12 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
       color: opts.color ?? true,
       pageSize: _resolvePageSize(ps?.name ?? 'A4'),
     );
+  }
+
+  // Always show a preset range, so the user can see and fix it.
+  bool get _showPages {
+    final count = widget.pageCount;
+    return count != null && (count > 1 || _presetRanges != null);
   }
 
   void _emit(PrintOptions opts) {
@@ -140,6 +153,20 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
               value: _options.copies ?? 1,
               max: _caps?.maxCopies,
               onChanged: (v) => _emit(_options.copyWith(copies: v)),
+            ),
+          ],
+          if (_showPages) ...[
+            const SizedBox(height: 14),
+            _SectionLabel(l10n.pages),
+            _PagesSelector(
+              pageCount: widget.pageCount!,
+              initialRanges: _presetRanges,
+              onChanged: (ranges) {
+                widget.onPagesValidChanged(ranges != null);
+                if (ranges != null) {
+                  _emit(_options.copyWith(pageRanges: ranges));
+                }
+              },
             ),
           ],
           const SizedBox(height: 14),
@@ -303,6 +330,103 @@ class _CopiesSelector extends StatelessWidget {
         if (v != null) onChanged(v);
       },
       mode: SpinButtonPlacementMode.inline,
+    );
+  }
+}
+
+class _PagesSelector extends StatefulWidget {
+  const _PagesSelector({
+    required this.pageCount,
+    required this.initialRanges,
+    required this.onChanged,
+  });
+
+  /// 0 when unknown.
+  final int pageCount;
+  final List<PageRange>? initialRanges;
+
+  /// Emits an empty list for all pages, or null when the custom text is blank
+  /// or invalid.
+  final ValueChanged<List<PageRange>?> onChanged;
+
+  @override
+  State<_PagesSelector> createState() => _PagesSelectorState();
+}
+
+class _PagesSelectorState extends State<_PagesSelector> {
+  final _controller = TextEditingController();
+  bool _custom = false;
+  bool _invalid = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final ranges = widget.initialRanges;
+    if (ranges != null) {
+      _custom = true;
+      _controller.text = formatPageRanges(ranges);
+      // Check the preset against the page count once the parent is built.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _emit();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _emit() {
+    if (!_custom) {
+      setState(() => _invalid = false);
+      widget.onChanged(const []);
+      return;
+    }
+    final ranges = parsePageRanges(
+      _controller.text,
+      pageCount: widget.pageCount,
+    );
+    // Keep blank text neutral; the parent still disables Print.
+    setState(
+      () => _invalid = ranges == null && _controller.text.trim().isNotEmpty,
+    );
+    widget.onChanged(ranges);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = PrintLocalizations.of(context);
+    final errorColor = FluentTheme.of(context).resources.systemFillColorCritical;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ComboBox<bool>(
+          isExpanded: true,
+          value: _custom,
+          onChanged: (v) {
+            if (v == null) return;
+            _custom = v;
+            _emit();
+          },
+          items: [
+            ComboBoxItem<bool>(value: false, child: Text(l10n.allPages)),
+            ComboBoxItem<bool>(value: true, child: Text(l10n.pageRangeCustom)),
+          ],
+        ),
+        if (_custom) ...[
+          const SizedBox(height: 8),
+          TextBox(
+            controller: _controller,
+            placeholder: '2-6, 9, 15',
+            keyboardType: TextInputType.text,
+            highlightColor: _invalid ? errorColor : null,
+            unfocusedColor: _invalid ? errorColor : null,
+            onChanged: (_) => _emit(),
+          ),
+        ],
+      ],
     );
   }
 }
