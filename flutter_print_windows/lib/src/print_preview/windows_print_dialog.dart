@@ -32,7 +32,7 @@ Future<void> showWindowsPrintDialog(
 
   // Use showGeneralDialog (Flutter core) instead of fluent_ui's showDialog,
   // which asserts FluentLocalizations on the *caller's* context.
-  return showGeneralDialog<void>(
+  final options = await showGeneralDialog<PrintOptions>(
     context: context,
     barrierDismissible: false,
     barrierLabel: 'Print',
@@ -66,6 +66,10 @@ Future<void> showWindowsPrintDialog(
       ),
     ),
   );
+  if (options == null) return;
+
+  // Print here so errors reach the caller.
+  await FlutterPrintApi().print(filePath, options: options);
 }
 
 // ComboBox items dim their text to textFillColorSecondary on hover, which
@@ -108,23 +112,27 @@ class _PrintDialog extends StatefulWidget {
 }
 
 class _PrintDialogState extends State<_PrintDialog> {
-  final _api = FlutterPrintApi();
-
   late PrintOptions _options;
-  bool _printing = false;
-  bool _pagesValid = true;
 
-  // PDF page count, loaded once for both panels. Null while loading.
+  // Guard against a double pop on a double click.
+  bool _printing = false;
+
+  // A preset range stays invalid until the page count confirms it.
+  late bool _pagesValid;
+
+  // Page count, loaded once for both panels. Null while loading, 0 when
+  // unknown (text files are paged at print time).
   int? _pageCount;
 
   @override
   void initState() {
     super.initState();
     _options = widget.initialOptions ?? PrintOptions();
+    _pagesValid = _options.pageRanges?.isEmpty ?? true;
     if (mimeIsPdf(widget.mimeType)) {
       _loadPageCount();
     } else {
-      _pageCount = 0;
+      _pageCount = mimeIsImage(widget.mimeType) ? 1 : 0;
     }
   }
 
@@ -158,7 +166,7 @@ class _PrintDialogState extends State<_PrintDialog> {
             SizedBox(
               width: 260,
               child: PrintSettingsPanel(
-                pageCount: _pageCount ?? 0,
+                pageCount: _pageCount,
                 initialOptions: _options,
                 onOptionsChanged: (opts) => setState(() => _options = opts),
                 onPagesValidChanged: (valid) =>
@@ -200,14 +208,9 @@ class _PrintDialogState extends State<_PrintDialog> {
     );
   }
 
-  Future<void> _print() async {
-    if (_options.printerAddress == null || !_pagesValid) return;
-    setState(() => _printing = true);
-    if (mounted) Navigator.of(context, rootNavigator: true).pop();
-    try {
-      await _api.print(widget.filePath, options: _options);
-    } catch (_) {
-      // Ignored.
-    }
+  void _print() {
+    if (_printing || _options.printerAddress == null || !_pagesValid) return;
+    _printing = true;
+    Navigator.of(context, rootNavigator: true).pop(_options);
   }
 }

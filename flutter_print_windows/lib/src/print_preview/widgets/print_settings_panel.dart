@@ -13,8 +13,8 @@ class PrintSettingsPanel extends StatefulWidget {
     required this.onPagesValidChanged,
   });
 
-  /// PDF page count, or 0 for other files or while loading.
-  final int pageCount;
+  /// Null while loading, 0 when unknown.
+  final int? pageCount;
   final PrintOptions initialOptions;
   final ValueChanged<PrintOptions> onOptionsChanged;
   final ValueChanged<bool> onPagesValidChanged;
@@ -109,10 +109,11 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
     );
   }
 
-  // Also show for a one-page PDF when the app preset a range, so the user can
-  // fix it.
-  bool get _showPages =>
-      widget.pageCount > 1 || (widget.pageCount == 1 && _presetRanges != null);
+  // Always show a preset range, so the user can see and fix it.
+  bool get _showPages {
+    final count = widget.pageCount;
+    return count != null && (count > 1 || _presetRanges != null);
+  }
 
   void _emit(PrintOptions opts) {
     setState(() {
@@ -158,7 +159,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
             const SizedBox(height: 14),
             _SectionLabel(l10n.pages),
             _PagesSelector(
-              pageCount: widget.pageCount,
+              pageCount: widget.pageCount!,
               initialRanges: _presetRanges,
               onChanged: (ranges) {
                 widget.onPagesValidChanged(ranges != null);
@@ -340,11 +341,12 @@ class _PagesSelector extends StatefulWidget {
     required this.onChanged,
   });
 
+  /// 0 when unknown.
   final int pageCount;
   final List<PageRange>? initialRanges;
 
-  /// Emits an empty list for all pages, or null when the custom text is
-  /// invalid.
+  /// Emits an empty list for all pages, or null when the custom text is blank
+  /// or invalid.
   final ValueChanged<List<PageRange>?> onChanged;
 
   @override
@@ -386,7 +388,10 @@ class _PagesSelectorState extends State<_PagesSelector> {
       _controller.text,
       pageCount: widget.pageCount,
     );
-    setState(() => _invalid = ranges == null);
+    // Keep blank text neutral; the parent still disables Print.
+    setState(
+      () => _invalid = ranges == null && _controller.text.trim().isNotEmpty,
+    );
     widget.onChanged(ranges);
   }
 
