@@ -33,6 +33,8 @@ extension FlutterPrintPlugin {
 
     let fileURL = URL(fileURLWithPath: filePath)
     let ext = fileURL.pathExtension.lowercased()
+    // Without ranges an empty PDF is not a range error.
+    let hasRanges = !(options?.pageRanges?.isEmpty ?? true)
 
     if ext == "pdf" {
       guard let doc = PDFDocument(url: fileURL) else {
@@ -42,7 +44,7 @@ extension FlutterPrintPlugin {
       }
       // Restrict to the selected pages (all pages when unset/empty).
       let pages = selectedPageIndices(ranges: options?.pageRanges, pageCount: doc.pageCount)
-      if pages.isEmpty { completion(.failure(noPageSelectedError())); return }
+      if pages.isEmpty && hasRanges { completion(.failure(noPageSelectedError())); return }
       printRendered(url: fileURL, options: options, showPanel: showPanel,
                     completion: completion) { info in
         let l = self.layout(for: info)
@@ -52,7 +54,7 @@ extension FlutterPrintPlugin {
     } else if let image = NSImage(contentsOf: fileURL) {
       // An image is a single page.
       let pages = selectedPageIndices(ranges: options?.pageRanges, pageCount: 1)
-      if pages.isEmpty { completion(.failure(noPageSelectedError())); return }
+      if pages.isEmpty && hasRanges { completion(.failure(noPageSelectedError())); return }
       printRendered(url: fileURL, options: options, showPanel: showPanel,
                     completion: completion) { info in
         let l = self.layout(for: info)
