@@ -1,3 +1,5 @@
+import 'dart:math' show min;
+
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_print_platform_interface/flutter_print_platform_interface.dart';
 
@@ -30,14 +32,9 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
   List<PageRange>? _presetRanges;
 
   List<String> get _supportedPageSizeNames {
-    final known = _caps?.supportedPageSizes.toSet();
-    final List<String> base;
-    if (known == null || known.isEmpty) {
-      base = allPageSizes;
-    } else {
-      final filtered = allPageSizes.where(known.contains).toList();
-      base = filtered.isEmpty ? allPageSizes : filtered;
-    }
+    final known = _caps?.supportedPageSizes.toSet() ?? const {};
+    final filtered = allPageSizes.where(known.contains).toList();
+    final base = filtered.isEmpty ? allPageSizes : filtered;
     final custom = _customPageSize;
     if (custom != null && !base.contains(custom.name)) {
       return [custom.name, ...base];
@@ -46,32 +43,23 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
   }
 
   PageSize _resolvePageSize(String name) {
-    return (_customPageSize != null && name == _customPageSize!.name)
-        ? _customPageSize!
-        : pageSizeFromName(name);
+    final custom = _customPageSize;
+    return name == custom?.name ? custom! : pageSizeFromName(name);
   }
 
   void _validateSettings() {
     final caps = _caps;
     if (caps == null) return;
 
-    int copies = _options.copies ?? 1;
-    if (caps.maxCopies != null && copies > caps.maxCopies!) {
-      copies = caps.maxCopies!;
-    }
-
-    bool color = _options.color ?? true;
-    switch (caps.colorCapability) {
-      case ColorCapability.enforced:
-        color = true;
-      case ColorCapability.monochrome:
-        color = false;
-      default:
-        break;
-    }
-
-    DuplexMode duplex = _options.duplexMode ?? DuplexMode.none;
-    if (caps.supportsDuplex == false) duplex = DuplexMode.none;
+    final copies = _options.copies ?? 1;
+    final color = switch (caps.colorCapability) {
+      ColorCapability.enforced => true,
+      ColorCapability.monochrome => false,
+      _ => _options.color ?? true,
+    };
+    final duplex = caps.supportsDuplex == false
+        ? DuplexMode.none
+        : _options.duplexMode ?? DuplexMode.none;
 
     final sizes = _supportedPageSizeNames;
     final currentName = _options.pageSize?.name ?? 'A4';
@@ -80,7 +68,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
         : sizes.first;
 
     _options = _options.copyWith(
-      copies: copies,
+      copies: min(copies, caps.maxCopies ?? copies),
       color: color,
       duplexMode: duplex,
       pageSize: _resolvePageSize(validatedName),
@@ -136,76 +124,86 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
           _PrinterSelector(
             initialAddress: _options.printerAddress,
             onChanged: (info) {
-              setState(() {
-                _caps = info?.capabilities;
-                _options = _options.copyWith(
-                  printerAddress: info?.address ?? info?.label,
-                );
-                _validateSettings();
-              });
-              widget.onOptionsChanged(_options);
+              _caps = info?.capabilities;
+              _emit(
+                _options.copyWith(printerAddress: info?.address ?? info?.label),
+              );
             },
           ),
-          if (_caps?.maxCopies != 1) ...[
-            const SizedBox(height: 14),
-            _SectionLabel(l10n.copies),
-            _CopiesSelector(
-              value: _options.copies ?? 1,
-              max: _caps?.maxCopies,
-              onChanged: (v) => _emit(_options.copyWith(copies: v)),
+          if (_caps?.maxCopies != 1)
+            ..._section(
+              l10n.copies,
+              _CopiesSelector(
+                value: _options.copies ?? 1,
+                max: _caps?.maxCopies,
+                onChanged: (v) => _emit(_options.copyWith(copies: v)),
+              ),
             ),
-          ],
-          if (_showPages) ...[
-            const SizedBox(height: 14),
-            _SectionLabel(l10n.pages),
-            _PagesSelector(
-              pageCount: widget.pageCount!,
-              initialRanges: _presetRanges,
-              onChanged: (ranges) {
-                widget.onPagesValidChanged(ranges != null);
-                if (ranges != null) {
-                  _emit(_options.copyWith(pageRanges: ranges));
-                }
-              },
+          if (_showPages)
+            ..._section(
+              l10n.pages,
+              _PagesSelector(
+                pageCount: widget.pageCount!,
+                initialRanges: _presetRanges,
+                onChanged: (ranges) {
+                  widget.onPagesValidChanged(ranges != null);
+                  if (ranges != null) {
+                    _emit(_options.copyWith(pageRanges: ranges));
+                  }
+                },
+              ),
             ),
-          ],
-          const SizedBox(height: 14),
-          _SectionLabel(l10n.layout),
-          _LayoutSelector(
-            value: _options.landscape ?? false,
-            onChanged: (v) => _emit(_options.copyWith(landscape: v)),
+          ..._section(
+            l10n.layout,
+            _Choice(
+              value: _options.landscape ?? false,
+              items: {false: l10n.portrait, true: l10n.landscape},
+              onChanged: (v) => _emit(_options.copyWith(landscape: v)),
+            ),
           ),
           if (_caps?.colorCapability != ColorCapability.monochrome &&
-              _caps?.colorCapability != ColorCapability.enforced) ...[
-            const SizedBox(height: 14),
-            _SectionLabel(l10n.color),
-            _ColorSelector(
-              value: _options.color ?? true,
-              onChanged: (v) => _emit(_options.copyWith(color: v)),
+              _caps?.colorCapability != ColorCapability.enforced)
+            ..._section(
+              l10n.color,
+              _Choice(
+                value: _options.color ?? true,
+                items: {true: l10n.colorMode, false: l10n.grayscale},
+                onChanged: (v) => _emit(_options.copyWith(color: v)),
+              ),
             ),
-          ],
-          const SizedBox(height: 14),
-          _SectionLabel(l10n.paperSize),
-          _PaperSizeSelector(
-            value: _options.pageSize?.name,
-            sizes: _supportedPageSizeNames,
-            onChanged: (v) {
-              _emit(_options.copyWith(pageSize: _resolvePageSize(v)));
-            },
+          ..._section(
+            l10n.paperSize,
+            _Choice(
+              value: _options.pageSize?.name,
+              items: {for (final n in _supportedPageSizeNames) n: n},
+              onChanged: (v) =>
+                  _emit(_options.copyWith(pageSize: _resolvePageSize(v))),
+            ),
           ),
-          if (_caps?.supportsDuplex != false) ...[
-            const SizedBox(height: 14),
-            _SectionLabel(l10n.twoSided),
-            _DuplexSelector(
-              value: _options.duplexMode ?? DuplexMode.none,
-              onChanged: (v) => _emit(_options.copyWith(duplexMode: v)),
+          if (_caps?.supportsDuplex != false)
+            ..._section(
+              l10n.twoSided,
+              _Choice(
+                value: _options.duplexMode ?? DuplexMode.none,
+                items: {
+                  DuplexMode.none: l10n.off,
+                  DuplexMode.longEdge: l10n.longEdge,
+                  DuplexMode.shortEdge: l10n.shortEdge,
+                },
+                onChanged: (v) => _emit(_options.copyWith(duplexMode: v)),
+              ),
             ),
-          ],
         ],
       ),
     );
   }
 }
+
+List<Widget> _section(String label, Widget child) => [
+  const SizedBox(height: 14),
+  _SectionLabel(label),
+  child,
+];
 
 class _SectionLabel extends StatelessWidget {
   const _SectionLabel(this.text);
@@ -240,13 +238,10 @@ class _PrinterSelectorState extends State<_PrinterSelector> {
   bool _loading = true;
   String? _selectedAddress;
 
-  PrinterInfo? get _selectedInfo {
-    return _selectedAddress == null
-        ? null
-        : _printers
-              .where((p) => (p.address ?? p.label) == _selectedAddress)
-              .firstOrNull;
-  }
+  static String _keyOf(PrinterInfo p) => p.address ?? p.label;
+
+  PrinterInfo? get _selectedInfo =>
+      _printers.where((p) => _keyOf(p) == _selectedAddress).firstOrNull;
 
   @override
   void initState() {
@@ -260,16 +255,13 @@ class _PrinterSelectorState extends State<_PrinterSelector> {
       final printers = await _api.listPrinters();
       if (!mounted) return;
 
-      final PrinterInfo? def = printers.isEmpty
-          ? null
-          : printers.firstWhere(
-              (p) => p.isDefault,
-              orElse: () => printers.first,
-            );
+      final def =
+          printers.where((p) => p.isDefault).firstOrNull ??
+          printers.firstOrNull;
 
       setState(() {
         _printers = printers;
-        _selectedAddress = def?.address ?? def?.label;
+        _selectedAddress = def == null ? null : _keyOf(def);
         _loading = false;
       });
 
@@ -297,7 +289,7 @@ class _PrinterSelectorState extends State<_PrinterSelector> {
       items: _printers
           .map(
             (p) => ComboBoxItem<String>(
-              value: p.address ?? p.label,
+              value: _keyOf(p),
               child: Text(
                 l10n.printerDisplayName(p.label, isDefault: p.isDefault),
                 overflow: TextOverflow.ellipsis,
@@ -398,22 +390,19 @@ class _PagesSelectorState extends State<_PagesSelector> {
   @override
   Widget build(BuildContext context) {
     final l10n = PrintLocalizations.of(context);
-    final errorColor = FluentTheme.of(context).resources.systemFillColorCritical;
+    final errorColor = FluentTheme.of(
+      context,
+    ).resources.systemFillColorCritical;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ComboBox<bool>(
-          isExpanded: true,
+        _Choice(
           value: _custom,
+          items: {false: l10n.allPages, true: l10n.pageRangeCustom},
           onChanged: (v) {
-            if (v == null) return;
             _custom = v;
             _emit();
           },
-          items: [
-            ComboBoxItem<bool>(value: false, child: Text(l10n.allPages)),
-            ComboBoxItem<bool>(value: true, child: Text(l10n.pageRangeCustom)),
-          ],
         ),
         if (_custom) ...[
           const SizedBox(height: 8),
@@ -431,104 +420,29 @@ class _PagesSelectorState extends State<_PagesSelector> {
   }
 }
 
-class _LayoutSelector extends StatelessWidget {
-  const _LayoutSelector({required this.value, required this.onChanged});
-
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = PrintLocalizations.of(context);
-    return ComboBox<bool>(
-      isExpanded: true,
-      value: value,
-      onChanged: (v) {
-        if (v != null) onChanged(v);
-      },
-      items: [
-        ComboBoxItem<bool>(value: false, child: Text(l10n.portrait)),
-        ComboBoxItem<bool>(value: true, child: Text(l10n.landscape)),
-      ],
-    );
-  }
-}
-
-class _ColorSelector extends StatelessWidget {
-  const _ColorSelector({required this.value, required this.onChanged});
-
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = PrintLocalizations.of(context);
-    return ComboBox<bool>(
-      isExpanded: true,
-      value: value,
-      onChanged: (v) {
-        if (v != null) onChanged(v);
-      },
-      items: [
-        ComboBoxItem<bool>(value: true, child: Text(l10n.colorMode)),
-        ComboBoxItem<bool>(value: false, child: Text(l10n.grayscale)),
-      ],
-    );
-  }
-}
-
-class _PaperSizeSelector extends StatelessWidget {
-  const _PaperSizeSelector({
+/// A full-width ComboBox over [items], shown in map order.
+class _Choice<T> extends StatelessWidget {
+  const _Choice({
     required this.value,
-    required this.sizes,
+    required this.items,
     required this.onChanged,
   });
 
-  final String? value;
-  final List<String> sizes;
-  final ValueChanged<String> onChanged;
+  final T? value;
+  final Map<T, String> items;
+  final ValueChanged<T> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    return ComboBox<String>(
-      isExpanded: true,
-      value: value,
-      onChanged: (v) {
-        if (v != null) onChanged(v);
-      },
-      items: sizes
-          .map((n) => ComboBoxItem<String>(value: n, child: Text(n)))
-          .toList(),
-    );
-  }
-}
-
-class _DuplexSelector extends StatelessWidget {
-  const _DuplexSelector({required this.value, required this.onChanged});
-
-  final DuplexMode value;
-  final ValueChanged<DuplexMode> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = PrintLocalizations.of(context);
-
-    return ComboBox<DuplexMode>(
+    return ComboBox<T>(
       isExpanded: true,
       value: value,
       onChanged: (v) {
         if (v != null) onChanged(v);
       },
       items: [
-        ComboBoxItem<DuplexMode>(value: DuplexMode.none, child: Text(l10n.off)),
-        ComboBoxItem<DuplexMode>(
-          value: DuplexMode.longEdge,
-          child: Text(l10n.longEdge),
-        ),
-        ComboBoxItem<DuplexMode>(
-          value: DuplexMode.shortEdge,
-          child: Text(l10n.shortEdge),
-        ),
+        for (final MapEntry(:key, :value) in items.entries)
+          ComboBoxItem<T>(value: key, child: Text(value)),
       ],
     );
   }

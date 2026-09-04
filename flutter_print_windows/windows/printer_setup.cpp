@@ -11,19 +11,12 @@ namespace flutter_print {
 // Paper names
 // ---------------------------------------------------------------------------
 
-int NameToDMPaper(const std::string& name) {
-  if (name == "A3")        return DMPAPER_A3;
-  if (name == "A4")        return DMPAPER_A4;
-  if (name == "A5")        return DMPAPER_A5;
-  if (name == "A6")        return DMPAPER_A6;
-  if (name == "Letter")    return DMPAPER_LETTER;
-  if (name == "Legal")     return DMPAPER_LEGAL;
-  if (name == "Tabloid")   return DMPAPER_TABLOID;
-  if (name == "Executive") return DMPAPER_EXECUTIVE;
-  if (name == "JIS B4")    return DMPAPER_B4;
-  if (name == "JIS B5")    return DMPAPER_B5;
-  if (name == "DL")        return DMPAPER_ENV_DL;
-  if (name == "C5")        return DMPAPER_ENV_C5;
+// Maps a well-known paper-size name (e.g. "A4") to its DMPAPER_* constant, or
+// 0 for unrecognised names.
+static int NameToDMPaper(const std::string& name) {
+  for (const auto& [id, known] : kKnownPapers) {
+    if (name == known) return id;
+  }
   return 0;
 }
 
@@ -31,7 +24,10 @@ int NameToDMPaper(const std::string& name) {
 // Copies
 // ---------------------------------------------------------------------------
 
-int GetDriverMaxCopies(const std::wstring& printerName) {
+// Returns the maximum copies the driver/spooler can produce natively, or 1 when
+// unknown. Drivers that report 1 (e.g. "Microsoft Print to PDF") silently clamp
+// dmCopies to 1, so extra copies must be emitted in software.
+static int GetDriverMaxCopies(const std::wstring& printerName) {
   // A null port is accepted on NT-based Windows and resolves to the printer's
   // default port. DC_COPIES returns the maximum copies the driver/spooler can
   // produce, or (DWORD)-1 when the capability is not implemented.
@@ -45,8 +41,10 @@ int GetDriverMaxCopies(const std::wstring& printerName) {
 // DEVMODE
 // ---------------------------------------------------------------------------
 
-void ApplyOptionsToDEVMODE(DEVMODE* dm, const PrintOptions& options,
-                           int deviceCopies) {
+// Writes |options| into |dm| in place. |deviceCopies| is the dmCopies value,
+// which may be less than options.copies() when the rest are emitted in software.
+static void ApplyOptionsToDEVMODE(DEVMODE* dm, const PrintOptions& options,
+                                  int deviceCopies) {
   // Each field is applied only when provided; unset (null) fields keep the
   // printer's default DEVMODE value.
   if (options.copies()) {
@@ -109,9 +107,36 @@ void ApplyOptionsToDEVMODE(DEVMODE* dm, const PrintOptions& options,
   }
 }
 
-HGLOBAL BuildDevMode(const std::wstring& printerName,
-                     const PrintOptions* options,
-                     int* out_software_copies) {
+static std::vector<BYTE> ReadDevMode(HANDLE hPrinter,
+                                     const std::wstring& printerName) {
+  const LONG sz = DocumentPropertiesW(
+      nullptr, hPrinter, const_cast<LPWSTR>(printerName.c_str()),
+      nullptr, nullptr, 0);
+  if (sz <= 0) return {};
+  std::vector<BYTE> buf(static_cast<size_t>(sz));
+  if (DocumentPropertiesW(nullptr, hPrinter,
+                           const_cast<LPWSTR>(printerName.c_str()),
+                           reinterpret_cast<DEVMODE*>(buf.data()), nullptr,
+                           DM_OUT_BUFFER) != IDOK) {
+    return {};
+  }
+  return buf;
+}
+
+std::vector<BYTE> GetDefaultDevMode(const std::wstring& printerName) {
+  HANDLE hPrinter = nullptr;
+  if (!OpenPrinterW(const_cast<LPWSTR>(printerName.c_str()), &hPrinter, nullptr))
+    return {};
+  std::vector<BYTE> buf = ReadDevMode(hPrinter, printerName);
+  ClosePrinter(hPrinter);
+  return buf;
+}
+
+// Returns the printer's DEVMODE with |options| overlaid, or empty on error.
+// When |options| is null the printer's default DEVMODE is returned unchanged.
+static std::vector<BYTE> BuildDevMode(const std::wstring& printerName,
+                                      const PrintOptions* options,
+                                      int* out_software_copies) {
   // Split the requested copies between the driver (dmCopies) and software
   // emission. Drivers that cannot replicate copies natively report
   // DC_COPIES == 1 and silently drop dmCopies > 1, so in that case we ask the
@@ -129,30 +154,12 @@ HGLOBAL BuildDevMode(const std::wstring& printerName,
 
   HANDLE hPrinter = nullptr;
   if (!OpenPrinterW(const_cast<LPWSTR>(printerName.c_str()), &hPrinter, nullptr))
-    return nullptr;
+    return {};
 
-  const LONG sz = DocumentPropertiesW(
-      nullptr, hPrinter, const_cast<LPWSTR>(printerName.c_str()),
-      nullptr, nullptr, 0);
-  if (sz <= 0) { ClosePrinter(hPrinter); return nullptr; }
-
-  HGLOBAL h = GlobalAlloc(GHND, sz);
-  if (!h) { ClosePrinter(hPrinter); return nullptr; }
-
-  auto* dm = static_cast<DEVMODE*>(GlobalLock(h));
-  if (!dm) { GlobalFree(h); ClosePrinter(hPrinter); return nullptr; }
-
-  if (DocumentPropertiesW(nullptr, hPrinter,
-                           const_cast<LPWSTR>(printerName.c_str()),
-                           dm, nullptr, DM_OUT_BUFFER) != IDOK) {
-    GlobalUnlock(h);
-    GlobalFree(h);
-    ClosePrinter(hPrinter);
-    return nullptr;
-  }
-
+  std::vector<BYTE> buf = ReadDevMode(hPrinter, printerName);
   // With no options, keep the printer's default DEVMODE (system defaults).
-  if (options) {
+  if (!buf.empty() && options) {
+    auto* dm = reinterpret_cast<DEVMODE*>(buf.data());
     ApplyOptionsToDEVMODE(dm, *options, deviceCopies);
     // Let the driver validate and normalise our changes; without this round-trip
     // many drivers silently ignore the modified DEVMODE and produce a blank job.
@@ -162,9 +169,8 @@ HGLOBAL BuildDevMode(const std::wstring& printerName,
                          const_cast<LPWSTR>(printerName.c_str()),
                          dm, dm, DM_IN_BUFFER | DM_OUT_BUFFER);
   }
-  GlobalUnlock(h);
   ClosePrinter(hPrinter);
-  return h;
+  return buf;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,12 +180,9 @@ HGLOBAL BuildDevMode(const std::wstring& printerName,
 HDC CreatePrinterDC(const std::wstring& printerName,
                     const PrintOptions* options,
                     int* out_software_copies) {
-  HGLOBAL h  = BuildDevMode(printerName, options, out_software_copies);
-  auto*   dm = h ? static_cast<DEVMODE*>(GlobalLock(h)) : nullptr;
-  HDC     hdc = CreateDCW(L"WINSPOOL", printerName.c_str(), nullptr, dm);
-  if (dm) GlobalUnlock(h);
-  if (h)  GlobalFree(h);
-  return hdc;
+  std::vector<BYTE> dm = BuildDevMode(printerName, options, out_software_copies);
+  return CreateDCW(L"WINSPOOL", printerName.c_str(), nullptr,
+                   dm.empty() ? nullptr : reinterpret_cast<DEVMODE*>(dm.data()));
 }
 
 // ---------------------------------------------------------------------------
@@ -190,47 +193,10 @@ std::optional<PrinterMargins> GetMinimumMargins(const std::wstring& printerName,
                                                 const std::string& paperSizeName,
                                                 double paperWidthMm,
                                                 double paperHeightMm) {
-  HANDLE hPrinter = nullptr;
-  if (!OpenPrinterW(const_cast<LPWSTR>(printerName.c_str()), &hPrinter, nullptr))
-    return std::nullopt;
-
-  const LONG sz = DocumentPropertiesW(
-      nullptr, hPrinter, const_cast<LPWSTR>(printerName.c_str()),
-      nullptr, nullptr, 0);
-  if (sz <= 0) { ClosePrinter(hPrinter); return std::nullopt; }
-
-  std::vector<BYTE> dmBuf(static_cast<size_t>(sz));
-  auto* dm = reinterpret_cast<DEVMODE*>(dmBuf.data());
-  if (DocumentPropertiesW(nullptr, hPrinter,
-                           const_cast<LPWSTR>(printerName.c_str()),
-                           dm, nullptr, DM_OUT_BUFFER) != IDOK) {
-    ClosePrinter(hPrinter);
-    return std::nullopt;
-  }
-
-  // Apply paper size.
-  dm->dmFields &= ~(DM_PAPERSIZE | DM_PAPERWIDTH | DM_PAPERLENGTH);
-  const int paper = NameToDMPaper(paperSizeName);
-  if (paper > 0) {
-    dm->dmPaperSize = static_cast<short>(paper);
-    dm->dmFields   |= DM_PAPERSIZE;
-  } else if (paperWidthMm > 0 && paperHeightMm > 0) {
-    const double shortEdge = std::min(paperWidthMm, paperHeightMm);
-    const double longEdge  = std::max(paperWidthMm, paperHeightMm);
-    dm->dmPaperSize   = DMPAPER_USER;
-    dm->dmPaperWidth  = static_cast<short>(std::round(shortEdge * 10.0));
-    dm->dmPaperLength = static_cast<short>(std::round(longEdge  * 10.0));
-    dm->dmFields     |= DM_PAPERSIZE | DM_PAPERWIDTH | DM_PAPERLENGTH;
-    dm->dmOrientation = (paperWidthMm > paperHeightMm) ? DMORIENT_LANDSCAPE
-                                                        : DMORIENT_PORTRAIT;
-  }
-  // Validate paper size with the driver before creating the DC.
-  DocumentPropertiesW(nullptr, hPrinter,
-                       const_cast<LPWSTR>(printerName.c_str()),
-                       dm, dm, DM_IN_BUFFER | DM_OUT_BUFFER);
-  ClosePrinter(hPrinter);
-
-  HDC hdc = CreateDCW(L"WINSPOOL", printerName.c_str(), nullptr, dm);
+  // Same paper-size rules and driver validation as the print path.
+  PrintOptions options;
+  options.set_page_size(PageSize(paperSizeName, &paperWidthMm, &paperHeightMm));
+  HDC hdc = CreatePrinterDC(printerName, &options);
   if (!hdc) return std::nullopt;
 
   // PHYSICALOFFSET* gives the top-left unprintable corner in device units.

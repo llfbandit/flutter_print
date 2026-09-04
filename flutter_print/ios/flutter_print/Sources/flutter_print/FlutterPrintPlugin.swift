@@ -73,15 +73,13 @@ private extension FlutterPrintPlugin {
 
     guard FileManager.default.fileExists(atPath: filePath) else {
       completion(.failure(PigeonError(code: "FILE_NOT_FOUND",
-                                      message: "File not found: \(filePath)",
-                                      details: nil)))
+                                      message: "File not found: \(filePath)")))
       return
     }
 
     guard UIPrintInteractionController.canPrint(fileURL) else {
       completion(.failure(PigeonError(code: "UNSUPPORTED_FILE",
-                                      message: "File type not supported for printing",
-                                      details: nil)))
+                                      message: "File type not supported for printing")))
       return
     }
 
@@ -112,10 +110,9 @@ private extension FlutterPrintPlugin {
       // user-cancelled dialog (completed == false) is reported as success,
       // since cancellation is a normal outcome rather than a failure.
       let printHandler: UIPrintInteractionController.CompletionHandler = { _, _, error in
-        if let error = error {
+        if let error {
           completion(.failure(PigeonError(code: "PRINT_ERROR",
-                                          message: error.localizedDescription,
-                                          details: nil)))
+                                          message: error.localizedDescription)))
         } else {
           completion(.success(()))
         }
@@ -130,16 +127,14 @@ private extension FlutterPrintPlugin {
         let printer = UIPrinter(url: printerURL)
         if !controller.print(to: printer, completionHandler: printHandler) {
           completion(.failure(PigeonError(code: "PRINT_ERROR",
-                                          message: "Failed to start the print job",
-                                          details: nil)))
+                                          message: "Failed to start the print job")))
         }
         return
       }
 
       guard let rootVC = self.rootViewController() else {
         completion(.failure(PigeonError(code: "NO_WINDOW",
-                                        message: "No active window to present the print dialog",
-                                        details: nil)))
+                                        message: "No active window to present the print dialog")))
         return
       }
 
@@ -152,21 +147,22 @@ private extension FlutterPrintPlugin {
       }
       if !presented {
         completion(.failure(PigeonError(code: "PRINT_ERROR",
-                                        message: "Failed to present the print dialog",
-                                        details: nil)))
+                                        message: "Failed to present the print dialog")))
       }
     }
   }
 
   func rootViewController() -> UIViewController? {
-    if #available(iOS 15.0, *) {
-      return UIApplication.shared.connectedScenes
-        .compactMap { $0 as? UIWindowScene }
-        .first(where: { $0.activationState == .foregroundActive })?
-        .windows.first(where: { $0.isKeyWindow })?
-        .rootViewController
-    } else {
-      return UIApplication.shared.keyWindow?.rootViewController
-    }
+    UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .first(where: { $0.activationState == .foregroundActive })?
+      .windows.first(where: { $0.isKeyWindow })?
+      .rootViewController
+  }
+}
+
+private extension PigeonError {
+  convenience init(code: String, message: String) {
+    self.init(code: code, message: message, details: nil)
   }
 }

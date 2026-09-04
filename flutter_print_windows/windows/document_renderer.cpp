@@ -169,12 +169,13 @@ static HRESULT GetEncoderClsid(const WCHAR* mimeType, CLSID* pClsid) {
 // Print rendering
 // ---------------------------------------------------------------------------
 
-std::optional<FlutterError> RenderImageToDC(HDC hdc, const std::wstring& path,
-                                            int copies,
-                                            const PageRanges& ranges) {
+// Renders an image with GDI+, falling back to WIC for formats GDI+ can't
+// decode (e.g. WebP, HEIC).
+static std::optional<FlutterError> RenderImageToDC(HDC hdc,
+                                                   const std::wstring& path,
+                                                   int copies,
+                                                   const PageRanges& ranges) {
   EnsureGdiplusInit();
-
-  if (copies < 1) copies = 1;
 
   // An image is a single page.
   if (auto err = CheckAnyPageSelected(1, ranges)) return err;
@@ -198,10 +199,10 @@ std::optional<FlutterError> RenderImageToDC(HDC hdc, const std::wstring& path,
   const UINT iw = img->GetWidth(), ih = img->GetHeight();
   const float s = std::min(static_cast<float>(pw) / iw,
                            static_cast<float>(ph) / ih);
-  const int dx = (pw - static_cast<int>(iw * s)) / 2;
-  const int dy = (ph - static_cast<int>(ih * s)) / 2;
   const int dw = static_cast<int>(iw * s);
   const int dh = static_cast<int>(ih * s);
+  const int dx = (pw - dw) / 2;
+  const int dy = (ph - dh) / 2;
 
   DOCINFOW di = {};
   di.cbSize      = sizeof(di);
@@ -245,8 +246,6 @@ static std::optional<FlutterError> DoRenderPdfDoc(HDC hdc, FPDF_DOCUMENT doc,
   const int marginLeft = GetDeviceCaps(hdc, PHYSICALOFFSETX);
   const int marginTop  = GetDeviceCaps(hdc, PHYSICALOFFSETY);
 
-  if (copies < 1) copies = 1;
-
   const int pageCount = FPDF_GetPageCount(doc);
   if (auto err = CheckAnyPageSelected(pageCount, ranges)) return err;
 
@@ -288,9 +287,10 @@ static std::optional<FlutterError> DoRenderPdfDoc(HDC hdc, FPDF_DOCUMENT doc,
   return err;
 }
 
-std::optional<FlutterError> RenderPdfToDC(HDC hdc, const std::wstring& path,
-                                          int copies,
-                                          const PageRanges& ranges) {
+static std::optional<FlutterError> RenderPdfToDC(HDC hdc,
+                                                 const std::wstring& path,
+                                                 int copies,
+                                                 const PageRanges& ranges) {
   EnsurePdfiumInit();
   std::lock_guard<std::mutex> lock(g_pdfium_mtx);
 
@@ -365,11 +365,12 @@ std::wstring ReadTextFile(const std::wstring& path) {
   return DecodeTextBytes(ReadAllBytes(path));
 }
 
-std::optional<FlutterError> RenderTextToDC(HDC hdc, const std::wstring& path,
-                                           int copies,
-                                           const PageRanges& ranges) {
-  if (copies < 1) copies = 1;
-  const std::wstring text = DecodeTextBytes(ReadAllBytes(path));
+// Paginates a text file with GDI, wrapping lines to the printable width.
+static std::optional<FlutterError> RenderTextToDC(HDC hdc,
+                                                  const std::wstring& path,
+                                                  int copies,
+                                                  const PageRanges& ranges) {
+  const std::wstring text = ReadTextFile(path);
 
   const int dpiX     = GetDeviceCaps(hdc, LOGPIXELSX);
   const int dpiY     = GetDeviceCaps(hdc, LOGPIXELSY);
@@ -476,30 +477,16 @@ std::optional<FlutterError> RenderTextToDC(HDC hdc, const std::wstring& path,
   return err;
 }
 
-std::optional<FlutterError> RenderOrFallback(HDC hdc,
-                                              const std::wstring& wPath,
-                                              const std::string& mime,
-                                              const std::wstring& printerName,
-                                              int copies,
-                                              const PageRanges& ranges) {
-  if (mime.rfind("image/", 0) == 0) {
-    auto err = RenderImageToDC(hdc, wPath, copies, ranges);
-    DeleteDC(hdc);
-    return err;
-  }
-  if (mime == "application/pdf") {
-    auto err = RenderPdfToDC(hdc, wPath, copies, ranges);
-    DeleteDC(hdc);
-    return err;
-  }
-  if (mime.rfind("text/", 0) == 0) {
-    auto err = RenderTextToDC(hdc, wPath, copies, ranges);
-    DeleteDC(hdc);
-    return err;
-  }
+std::optional<FlutterError> RenderToDC(HDC hdc, const std::wstring& wPath,
+                                       const std::string& mime, int copies,
+                                       const PageRanges& ranges) {
+  if (mime == "application/pdf") return RenderPdfToDC(hdc, wPath, copies, ranges);
+  if (mime.rfind("text/", 0) == 0) return RenderTextToDC(hdc, wPath, copies, ranges);
+  return RenderImageToDC(hdc, wPath, copies, ranges);
+}
 
-  if (hdc) DeleteDC(hdc);
-
+std::optional<FlutterError> ShellPrint(const std::wstring& wPath,
+                                       const std::wstring& printerName) {
   // Unknown type: delegate to the file's associated application via the shell
   // "print"/"printto" verb. There is no Win32 API to render an arbitrary
   // registered file type with our print options, so options are NOT honoured

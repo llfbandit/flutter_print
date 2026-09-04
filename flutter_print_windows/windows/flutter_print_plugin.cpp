@@ -110,38 +110,29 @@ std::optional<FlutterError> FlutterPrintPlugin::PrintInternal(
   if (GetFileAttributesW(wPath.c_str()) == INVALID_FILE_ATTRIBUTES)
     return FlutterError("FILE_NOT_FOUND", "File not found: " + file_path);
 
-  // When options is null the caller wants the printer's default settings; pass
-  // it through untouched so no DEVMODE overrides are applied.
-  const std::string mime = GetMimeType(wPath);
-  if (mime.rfind("image/", 0) == 0 || mime == "application/pdf" ||
-      mime.rfind("text/", 0) == 0) {
-    std::wstring wPrinter;
-    const std::string* pn = options ? options->printer_address() : nullptr;
-    if (pn && !pn->empty()) {
-      wPrinter = Utf8ToWide(*pn);
-    } else {
-      WCHAR buf[512] = {};
-      DWORD sz = static_cast<DWORD>(sizeof(buf) / sizeof(WCHAR));
-      GetDefaultPrinterW(buf, &sz);
-      wPrinter = buf;
-    }
-    if (wPrinter.empty())
-      return FlutterError("PRINTER_ERROR", "No printer available");
-
-    int softwareCopies = 1;
-    HDC hdc = CreatePrinterDC(wPrinter, options, &softwareCopies);
-    if (!hdc)
-      return FlutterError("PRINTER_ERROR",
-                          "Cannot create printer DC for: " +
-                              WideToUtf8(wPrinter.c_str()));
-    return RenderOrFallback(hdc, wPath, mime, wPrinter, softwareCopies,
-                            ExtractPageRanges(options));
-  }
+  const std::string* pn = options ? options->printer_address() : nullptr;
+  std::wstring wPrinter = (pn && !pn->empty()) ? Utf8ToWide(*pn) : std::wstring{};
 
   // Other file types: delegate to the file's associated application.
-  const std::string* pn = options ? options->printer_address() : nullptr;
-  const std::wstring wPrinter = (pn && !pn->empty()) ? Utf8ToWide(*pn) : std::wstring{};
-  return RenderOrFallback(nullptr, wPath, mime, wPrinter);
+  const std::string mime = GetMimeType(wPath);
+  if (!IsRenderableMime(mime)) return ShellPrint(wPath, wPrinter);
+
+  if (wPrinter.empty()) wPrinter = DefaultPrinterName();
+  if (wPrinter.empty())
+    return FlutterError("PRINTER_ERROR", "No printer available");
+
+  // When options is null the caller wants the printer's default settings; pass
+  // it through untouched so no DEVMODE overrides are applied.
+  int softwareCopies = 1;
+  HDC hdc = CreatePrinterDC(wPrinter, options, &softwareCopies);
+  if (!hdc)
+    return FlutterError("PRINTER_ERROR",
+                        "Cannot create printer DC for: " +
+                            WideToUtf8(wPrinter.c_str()));
+  auto err = RenderToDC(hdc, wPath, mime, softwareCopies,
+                        ExtractPageRanges(options));
+  DeleteDC(hdc);
+  return err;
 }
 
 void FlutterPrintPlugin::PrintPreview(
@@ -186,29 +177,10 @@ void FlutterPrintPlugin::ListPrinters(
     }
     if (!ok) { reply(flutter::EncodableList{}); return; }
 
-    WCHAR defName[512] = {};
-    DWORD defSize = static_cast<DWORD>(sizeof(defName) / sizeof(WCHAR));
-    GetDefaultPrinterW(defName, &defSize);
-    const std::wstring defaultPrinter(defName);
+    const std::wstring defaultPrinter = DefaultPrinterName();
 
     auto* info = reinterpret_cast<PRINTER_INFO_2W*>(buf.data());
     flutter::EncodableList printers;
-
-    // Paper-size IDs mapped to the well-known names the Dart layer uses.
-    static const std::pair<WORD, const char*> kKnownPapers[] = {
-        {static_cast<WORD>(DMPAPER_A3),        "A3"},
-        {static_cast<WORD>(DMPAPER_A4),        "A4"},
-        {static_cast<WORD>(DMPAPER_A5),        "A5"},
-        {static_cast<WORD>(DMPAPER_A6),        "A6"},
-        {static_cast<WORD>(DMPAPER_LETTER),    "Letter"},
-        {static_cast<WORD>(DMPAPER_LEGAL),     "Legal"},
-        {static_cast<WORD>(DMPAPER_TABLOID),   "Tabloid"},
-        {static_cast<WORD>(DMPAPER_EXECUTIVE), "Executive"},
-        {static_cast<WORD>(DMPAPER_B4),        "JIS B4"},
-        {static_cast<WORD>(DMPAPER_B5),        "JIS B5"},
-        {static_cast<WORD>(DMPAPER_ENV_DL),    "DL"},
-        {static_cast<WORD>(DMPAPER_ENV_C5),    "C5"},
-    };
 
     for (DWORD i = 0; i < returned; ++i) {
       const WCHAR* name = info[i].pPrinterName;
@@ -216,11 +188,6 @@ void FlutterPrintPlugin::ListPrinters(
       const WCHAR* port = info[i].pPortName;
 
       // Color support.
-      // DC_COLORDEVICE is unreliable for virtual/software printers on modern
-      // Windows — they return 1 (colour) just like physical colour printers.
-      // Detect them first by port name: virtual printers use well-known
-      // file-output ports (PORTPROMPT:, nul:) while physical printers use
-      // hardware ports (USB, WSD-*, LPT#, etc.).
       ColorCapability colorCap = ColorCapability::kUnknown;
       {
         // Case-insensitive port-name comparison (port names are always ASCII).
@@ -249,27 +216,12 @@ void FlutterPrintPlugin::ListPrinters(
             colorCap = ColorCapability::kMonochrome;
             // Verify via DEVMODE — a small number of drivers carry DM_COLOR in
             // dmFields despite reporting 0, indicating a virtual/software printer.
-            HANDLE hPrinter = nullptr;
-            if (OpenPrinterW(const_cast<LPWSTR>(name), &hPrinter, nullptr)) {
-              LONG sz = DocumentPropertiesW(nullptr, hPrinter,
-                                            const_cast<LPWSTR>(name),
-                                            nullptr, nullptr, 0);
-              if (sz > 0) {
-                std::vector<BYTE> dmBuf(static_cast<size_t>(sz));
-                auto* dm = reinterpret_cast<DEVMODE*>(dmBuf.data());
-                if (DocumentPropertiesW(nullptr, hPrinter,
-                                         const_cast<LPWSTR>(name),
-                                         dm, nullptr, DM_OUT_BUFFER) == IDOK) {
-                  if (dm->dmFields & DM_COLOR)
-                    colorCap = ColorCapability::kEnforced;  // DM_COLOR despite r==0 → virtual
-                }
-              }
-              ClosePrinter(hPrinter);
-            }
-          } else {
-            // r == -1: DC_COLORDEVICE not implemented — capability unknown.
-            colorCap = ColorCapability::kUnknown;
+            const std::vector<BYTE> dm = GetDefaultDevMode(name);
+            if (!dm.empty() &&
+                (reinterpret_cast<const DEVMODE*>(dm.data())->dmFields & DM_COLOR))
+              colorCap = ColorCapability::kEnforced;  // DM_COLOR despite r==0 → virtual
           }
+          // r == -1: DC_COLORDEVICE not implemented — capability stays unknown.
         }
       }
 
@@ -423,13 +375,12 @@ void FlutterPrintPlugin::HandleOpenInDefaultApp(const flutter::EncodableMap& arg
                alive = alive_]() mutable {
     SHELLEXECUTEINFOW sei = {};
     sei.cbSize = sizeof(sei);
-    sei.fMask  = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+    sei.fMask  = SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
     sei.lpVerb = L"open";
     sei.lpFile = wPath.c_str();
     sei.nShow  = SW_SHOWNORMAL;
     const bool ok = ShellExecuteExW(&sei);
     const DWORD e = ok ? 0 : GetLastError();
-    if (sei.hProcess) CloseHandle(sei.hProcess);
     if (!alive->load()) return;
     if (ok) {
       result->Success();

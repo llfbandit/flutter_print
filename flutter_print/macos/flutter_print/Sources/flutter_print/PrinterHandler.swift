@@ -10,8 +10,7 @@ extension FlutterPrintPlugin {
     // NSPrinter.printerNames can trigger network lookups for Bonjour printers,
     // so enumerate on a background queue to avoid stalling the platform thread.
     DispatchQueue.global(qos: .userInitiated).async {
-      var availabilityMap: [String: Bool] = [:]
-      var capabilitiesMap: [String: PrinterCapabilities] = [:]
+      var pmInfo: [String: (isAvailable: Bool, capabilities: PrinterCapabilities)] = [:]
       var listRef: Unmanaged<CFArray>?
       if PMServerCreatePrinterList(nil, &listRef) == noErr,
          let cfArray = listRef?.takeRetainedValue() {
@@ -22,9 +21,10 @@ extension FlutterPrintPlugin {
                 let name = nameRef.takeUnretainedValue() as String? else { continue }
           var state: PMPrinterState = 0
           PMPrinterGetState(pmPrinter, &state)
-          availabilityMap[name] = (state == PMPrinterState(kPMPrinterIdle)
-                                || state == PMPrinterState(kPMPrinterProcessing))
-          capabilitiesMap[name] = Self.capabilities(for: pmPrinter)
+          pmInfo[name] = (
+            isAvailable: state == PMPrinterState(kPMPrinterIdle)
+              || state == PMPrinterState(kPMPrinterProcessing),
+            capabilities: Self.capabilities(for: pmPrinter))
         }
       }
 
@@ -34,8 +34,8 @@ extension FlutterPrintPlugin {
           label: name,
           address: name,
           isDefault: name == defaultName,
-          capabilities: capabilitiesMap[name] ?? Self.unknownCapabilities,
-          isAvailable: availabilityMap[name]
+          capabilities: pmInfo[name]?.capabilities ?? Self.unknownCapabilities,
+          isAvailable: pmInfo[name]?.isAvailable
         )
       }
       completion(.success(printers))
@@ -53,23 +53,12 @@ extension FlutterPrintPlugin {
   /// Both paths work inside the App Sandbox; PPD fields degrade to unknown/nil
   /// if the read ever fails.
   private static func capabilities(for printer: PMPrinter) -> PrinterCapabilities {
-    let pageSizes = supportedPageSizes(for: printer)
-
-    var color: ColorCapability = .unknown
-    var supportsDuplex: Bool? = nil
-    var maxCopies: Int64? = nil
-    if let ppd = ppdText(for: printer) {
-      let parsed = parsePpd(ppd)
-      color = parsed.color
-      supportsDuplex = parsed.supportsDuplex
-      maxCopies = parsed.maxCopies
-    }
-
+    let parsed = ppdText(for: printer).map(parsePpd)
     return PrinterCapabilities(
-      colorCapability: color,
-      supportsDuplex: supportsDuplex,
-      maxCopies: maxCopies,
-      supportedPageSizes: pageSizes
+      colorCapability: parsed?.color ?? .unknown,
+      supportsDuplex: parsed?.supportsDuplex,
+      maxCopies: parsed?.maxCopies,
+      supportedPageSizes: supportedPageSizes(for: printer)
     )
   }
 
@@ -102,7 +91,7 @@ extension FlutterPrintPlugin {
   }
 
   /// PPD paper-name keywords mapped to the plugin's well-known names
-  /// (see `applyNamedPaper`); unlisted keywords are dropped.
+  /// (see `paperSizesMm`); unlisted keywords are dropped.
   private static let ppdPageSizeName: [String: String] = [
     "A0": "A0", "A1": "A1", "A2": "A2", "A3": "A3",
     "A4": "A4", "A5": "A5", "A6": "A6",

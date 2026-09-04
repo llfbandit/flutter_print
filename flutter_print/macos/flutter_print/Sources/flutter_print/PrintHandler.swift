@@ -4,6 +4,24 @@ import PDFKit
 
 /// Boxes a Pigeon completion so it can be passed through the Objective-C
 /// `contextInfo` pointer of `NSPrintOperation.runModal(for:delegate:didRun:contextInfo:)`.
+private let mmToPts = 72.0 / 25.4
+
+/// Well-known paper sizes in portrait millimetres, keyed by `PageSize.name`.
+private let paperSizesMm: [String: (Double, Double)] = [
+  // ISO A-series
+  "A0": (841, 1189), "A1": (594, 841), "A2": (420, 594),
+  "A3": (297, 420), "A4": (210, 297), "A5": (148, 210), "A6": (105, 148),
+  // ISO B-series
+  "B4": (250, 353), "B5": (176, 250),
+  // North American
+  "Letter": (215.9, 279.4), "Legal": (215.9, 355.6),
+  "Tabloid": (279.4, 431.8), "Executive": (184.2, 266.7),
+  // JIS B-series
+  "JIS B4": (257, 364), "JIS B5": (182, 257),
+  // Envelopes
+  "C5": (162, 229), "DL": (110, 220),
+]
+
 private final class PrintCompletionBox {
   let completion: (Result<Void, Error>) -> Void
   init(_ completion: @escaping (Result<Void, Error>) -> Void) {
@@ -26,42 +44,28 @@ extension FlutterPrintPlugin {
                            completion: @escaping (Result<Void, Error>) -> Void) {
     guard FileManager.default.fileExists(atPath: filePath) else {
       completion(.failure(PigeonError(code: "FILE_NOT_FOUND",
-                                      message: "File not found: \(filePath)",
-                                      details: nil)))
+                                      message: "File not found: \(filePath)")))
       return
     }
 
     let fileURL = URL(fileURLWithPath: filePath)
     let ext = fileURL.pathExtension.lowercased()
-    // Without ranges an empty PDF is not a range error.
-    let hasRanges = !(options?.pageRanges?.isEmpty ?? true)
 
     if ext == "pdf" {
       guard let doc = PDFDocument(url: fileURL) else {
         completion(.failure(PigeonError(code: "INVALID_FILE",
-                                        message: "Cannot open PDF", details: nil)))
+                                        message: "Cannot open PDF")))
         return
       }
-      // Restrict to the selected pages (all pages when unset/empty).
-      let pages = selectedPageIndices(ranges: options?.pageRanges, pageCount: doc.pageCount)
-      if pages.isEmpty && hasRanges { completion(.failure(noPageSelectedError())); return }
-      printRendered(url: fileURL, options: options, showPanel: showPanel,
-                    completion: completion) { info in
-        let l = self.layout(for: info)
-        return PDFPagePrintView(document: doc, pages: pages,
-                                paperSize: l.paper, contentRect: l.content)
+      printRendered(options: options, showPanel: showPanel,
+                    pageCount: doc.pageCount, completion: completion) { pages, l in
+        PDFPagePrintView(document: doc, pages: pages,
+                         paperSize: l.paper, contentRect: l.content)
       }
     } else if let image = NSImage(contentsOf: fileURL) {
-      // An image is a single page.
-      let pages = selectedPageIndices(ranges: options?.pageRanges, pageCount: 1)
-      if pages.isEmpty && hasRanges { completion(.failure(noPageSelectedError())); return }
-      printRendered(url: fileURL, options: options, showPanel: showPanel,
-                    completion: completion) { info in
-        let l = self.layout(for: info)
-        return ImagePrintView(
-          image: image,
-          bounds: NSRect(origin: .zero, size: l.paper),
-          contentRect: l.content)
+      printRendered(options: options, showPanel: showPanel,
+                    pageCount: 1, completion: completion) { _, l in
+        ImagePrintView(image: image, paperSize: l.paper, contentRect: l.content)
       }
     } else if showPanel {
       openInDefaultApp(fileURL, errorCode: "PREVIEW_ERROR", completion: completion)
@@ -73,12 +77,11 @@ extension FlutterPrintPlugin {
         switch result {
         case .launchFailed:
           self.openInDefaultApp(fileURL, errorCode: "PRINT_ERROR", completion: completion)
-        case .completed(let status) where status == 0:
+        case .completed(0):
           completion(.success(()))
         case .completed(let status):
           completion(.failure(PigeonError(code: "PRINT_ERROR",
-                                          message: "lp exited with status \(status)",
-                                          details: nil)))
+                                          message: "lp exited with status \(status)")))
         }
       }
     }
@@ -93,8 +96,7 @@ extension FlutterPrintPlugin {
         completion(.success(()))
       } else {
         completion(.failure(PigeonError(code: errorCode,
-                                        message: "Cannot open file: \(fileURL.path)",
-                                        details: nil)))
+                                        message: "Cannot open file: \(fileURL.path)")))
       }
     }
   }
@@ -120,11 +122,10 @@ extension FlutterPrintPlugin {
     }
 
     if let duplex = options?.duplexMode {
-      let mode: PMDuplexMode
-      switch duplex {
-      case .none:      mode = PMDuplexMode(kPMDuplexNone)
-      case .longEdge:  mode = PMDuplexMode(kPMDuplexNoTumble)
-      case .shortEdge: mode = PMDuplexMode(kPMDuplexTumble)
+      let mode = switch duplex {
+      case .none:      PMDuplexMode(kPMDuplexNone)
+      case .longEdge:  PMDuplexMode(kPMDuplexNoTumble)
+      case .shortEdge: PMDuplexMode(kPMDuplexTumble)
       }
       PMSetDuplex(OpaquePointer(info.pmPrintSettings()), mode)
       info.updateFromPMPrintSettings()
@@ -140,31 +141,24 @@ extension FlutterPrintPlugin {
       info.printSettings["print-color-mode"] = "monochrome"
     }
 
-    let mmToPts: CGFloat = 72.0 / 25.4
-
     // Paper size is set in natural (portrait) dimensions; NSPrintInfo rotates
     // it to match `orientation` automatically, so no manual landscape swap.
     if let ps = options?.pageSize {
-      let sizeApplied = applyNamedPaper(ps.name, to: info)
-      if !sizeApplied, let w = ps.width, let h = ps.height {
-        info.paperSize = NSSize(width: CGFloat(w) * mmToPts, height: CGFloat(h) * mmToPts)
+      if let (w, h) = paperSizesMm[ps.name] {
+        info.paperSize = NSSize(width: w * mmToPts, height: h * mmToPts)
+      } else if let w = ps.width, let h = ps.height {
+        info.paperSize = NSSize(width: w * mmToPts, height: h * mmToPts)
       }
     }
 
-    if let m = options?.margins {
-      info.topMargin    = CGFloat(m.top)    * mmToPts
-      info.bottomMargin = CGFloat(m.bottom) * mmToPts
-      info.leftMargin   = CGFloat(m.left)   * mmToPts
-      info.rightMargin  = CGFloat(m.right)  * mmToPts
-    } else {
-      // No margins requested: fill the whole sheet. Without this the inherited
-      // NSPrintInfo.shared defaults (~1 inch each side) would silently shrink
-      // the rendered PDF/image.
-      info.topMargin = 0
-      info.bottomMargin = 0
-      info.leftMargin = 0
-      info.rightMargin = 0
-    }
+    // No margins requested: fill the whole sheet. Without this the inherited
+    // NSPrintInfo.shared defaults (~1 inch each side) would silently shrink
+    // the rendered PDF/image.
+    let m = options?.margins
+    info.topMargin    = (m?.top    ?? 0) * mmToPts
+    info.bottomMargin = (m?.bottom ?? 0) * mmToPts
+    info.leftMargin   = (m?.left   ?? 0) * mmToPts
+    info.rightMargin  = (m?.right  ?? 0) * mmToPts
 
     if let copies = options?.copies {
       PMSetCopies(OpaquePointer(info.pmPrintSettings()), UInt32(copies), false)
@@ -180,19 +174,14 @@ extension FlutterPrintPlugin {
 
   /// Resolves [ranges] into a sorted list of 0-based document page indices to
   /// print. Returns every page (`0..<pageCount`) when [ranges] is nil or empty,
-  /// and an empty array when the selection matches no page in the document.
-  private func selectedPageIndices(ranges: [PageRange]?, pageCount: Int) -> [Int] {
-    guard pageCount > 0 else { return [] }
+  /// and nil when the selection matches no page in the document.
+  private func selectedPageIndices(ranges: [PageRange]?, pageCount: Int) -> [Int]? {
     guard let ranges, !ranges.isEmpty else { return Array(0..<pageCount) }
-    return (0..<pageCount).filter { idx in
+    let pages = (0..<pageCount).filter { idx in
       let page = Int64(idx + 1)
       return ranges.contains { page >= $0.start && page <= $0.end }
     }
-  }
-
-  private func noPageSelectedError() -> PigeonError {
-    PigeonError(code: "INVALID_PAGE_RANGE", message: "Page ranges select no page",
-                details: nil)
+    return pages.isEmpty ? nil : pages
   }
 
   /// Paper size (already oriented by NSPrintInfo) and the content rect both
@@ -208,20 +197,20 @@ extension FlutterPrintPlugin {
   }
 
   private func printRendered(
-    url: URL,
     options: PrintOptions?,
     showPanel: Bool,
+    pageCount: Int,
     completion: @escaping (Result<Void, Error>) -> Void,
-    makeView: (NSPrintInfo) throws -> NSView
+    makeView: ([Int], (paper: NSSize, content: NSRect)) -> NSView
   ) {
-    let printInfo = buildPrintInfo(options: options)
-    let view: NSView
-    do {
-      view = try makeView(printInfo)
-    } catch {
-      completion(.failure(error))
+    guard let pages = selectedPageIndices(ranges: options?.pageRanges, pageCount: pageCount)
+    else {
+      completion(.failure(PigeonError(code: "INVALID_PAGE_RANGE",
+                                      message: "Page ranges select no page")))
       return
     }
+    let printInfo = buildPrintInfo(options: options)
+    let view = makeView(pages, layout(for: printInfo))
     DispatchQueue.main.async {
       let op = NSPrintOperation(view: view, printInfo: printInfo)
       op.showsPrintPanel = showPanel
@@ -255,8 +244,7 @@ extension FlutterPrintPlugin {
           completion(.success(()))
         } else {
           completion(.failure(PigeonError(code: "PRINT_ERROR",
-                                          message: "Print operation failed",
-                                          details: nil)))
+                                          message: "Print operation failed")))
         }
       }
     }
@@ -286,16 +274,16 @@ extension FlutterPrintPlugin {
       args += ["-o", "print-color-mode=monochrome"]
     }
     if let duplex = options?.duplexMode {
-      switch duplex {
-      case .none:      args += ["-o", "sides=one-sided"]
-      case .longEdge:  args += ["-o", "sides=two-sided-long-edge"]
-      case .shortEdge: args += ["-o", "sides=two-sided-short-edge"]
+      let sides = switch duplex {
+      case .none:      "one-sided"
+      case .longEdge:  "two-sided-long-edge"
+      case .shortEdge: "two-sided-short-edge"
       }
+      args += ["-o", "sides=\(sides)"]
     }
     if let pageRanges = cupsPageRanges(options?.pageRanges) {
       args += ["-o", "page-ranges=\(pageRanges)"]
     }
-    let mmToPts = 72.0 / 25.4
     if let ps = options?.pageSize {
       if !ps.name.isEmpty {
         // Most CUPS drivers accept the well-known name directly (e.g. "A4").
@@ -339,26 +327,10 @@ extension FlutterPrintPlugin {
     return ranges.map { $0.start == $0.end ? "\($0.start)" : "\($0.start)-\($0.end)" }
       .joined(separator: ",")
   }
+}
 
-  @discardableResult
-  private func applyNamedPaper(_ name: String, to info: NSPrintInfo) -> Bool {
-    let sizes: [String: (Double, Double)] = [
-      // ISO A-series
-      "A0": (841, 1189), "A1": (594, 841), "A2": (420, 594),
-      "A3": (297, 420), "A4": (210, 297), "A5": (148, 210), "A6": (105, 148),
-      // ISO B-series
-      "B4": (250, 353), "B5": (176, 250),
-      // North American
-      "Letter": (215.9, 279.4), "Legal": (215.9, 355.6),
-      "Tabloid": (279.4, 431.8), "Executive": (184.2, 266.7),
-      // JIS B-series
-      "JIS B4": (257, 364), "JIS B5": (182, 257),
-      // Envelopes
-      "C5": (162, 229), "DL": (110, 220),
-    ]
-    guard let (w, h) = sizes[name] else { return false }
-    let k: CGFloat = 72.0 / 25.4
-    info.paperSize = NSSize(width: CGFloat(w) * k, height: CGFloat(h) * k)
-    return true
+private extension PigeonError {
+  convenience init(code: String, message: String) {
+    self.init(code: code, message: message, details: nil)
   }
 }

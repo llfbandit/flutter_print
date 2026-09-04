@@ -27,16 +27,9 @@ struct _FlutterPrintPlugin {
 
 G_DEFINE_TYPE(FlutterPrintPlugin, flutter_print_plugin, g_object_get_type())
 
-static void flutter_print_plugin_dispose(GObject* object) {
-  G_OBJECT_CLASS(flutter_print_plugin_parent_class)->dispose(object);
-}
-
-static void flutter_print_plugin_class_init(FlutterPrintPluginClass* klass) {
-  G_OBJECT_CLASS(klass)->dispose = flutter_print_plugin_dispose;
-}
+static void flutter_print_plugin_class_init(FlutterPrintPluginClass* klass) {}
 
 static void flutter_print_plugin_init(FlutterPrintPlugin* self) {}
-
 
 #ifdef HAS_CUPS
 // Returns true for formats CUPS typically cannot rasterise natively.
@@ -52,34 +45,45 @@ static bool needs_transcode(const char* path) {
 // Returns a heap-allocated file path on success (caller must g_free + unlink),
 // or nullptr if GDK-Pixbuf cannot load the format (codec not installed).
 static gchar* transcode_to_png(const char* path) {
-  GError* err = nullptr;
-  GdkPixbuf* pixbuf = gdk_pixbuf_new_from_file(path, &err);
+  g_autoptr(GError) err = nullptr;
+  g_autoptr(GdkPixbuf) pixbuf = gdk_pixbuf_new_from_file(path, &err);
   if (!pixbuf) {
     g_warning("flutter_print: GDK-Pixbuf cannot decode %s: %s",
                path, err ? err->message : "(unknown)");
-    g_clear_error(&err);
     return nullptr;
   }
 
-  gchar* tmp = g_strdup_printf("%s/flutter_print_%d.png",
-                                g_get_tmp_dir(), (int)getpid());
+  g_autofree gchar* tmp = g_strdup_printf("%s/flutter_print_%d.png",
+                                           g_get_tmp_dir(), (int)getpid());
   if (!gdk_pixbuf_save(pixbuf, tmp, "png", &err, nullptr)) {
     g_warning("flutter_print: failed to save temp PNG: %s",
                err ? err->message : "(unknown)");
-    g_clear_error(&err);
-    g_object_unref(pixbuf);
-    g_free(tmp);
     return nullptr;
   }
-
-  g_object_unref(pixbuf);
-  return tmp;
+  return static_cast<gchar*>(g_steal_pointer(&tmp));
 }
 #endif
 
 // ---------------------------------------------------------------------------
 // Print / PrintPreview
 // ---------------------------------------------------------------------------
+
+// The CUPS "sides" value for the duplex mode in |options|, or nullptr when
+// unset.
+static const char* duplex_sides(FlutterPrintPrintOptions* options) {
+  FlutterPrintDuplexMode* mode =
+      options ? flutter_print_print_options_get_duplex_mode(options) : nullptr;
+  if (!mode) return nullptr;
+  switch (*mode) {
+    case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_NONE:
+      return "one-sided";
+    case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_LONG_EDGE:
+      return "two-sided-long-edge";
+    case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_SHORT_EDGE:
+      return "two-sided-short-edge";
+  }
+  return nullptr;
+}
 
 // Formats the pageRanges of |options| as a CUPS "page-ranges" value
 // (e.g. "2-6,9,15"). Returns a newly-allocated string the caller must g_free,
@@ -137,9 +141,8 @@ static void handle_print(
   const int64_t* copies =
       options ? flutter_print_print_options_get_copies(options) : nullptr;
   if (copies && *copies > 1) {
-    gchar* s = g_strdup_printf("%" G_GINT64_FORMAT, *copies);
+    g_autofree gchar* s = g_strdup_printf("%" G_GINT64_FORMAT, *copies);
     num_options = cupsAddOption("copies", s, num_options, &cups_opts);
-    g_free(s);
   }
 
   // Use the IPP-standard attribute (3=portrait, 4=landscape) instead of the
@@ -158,20 +161,8 @@ static void handle_print(
                                 num_options, &cups_opts);
   }
 
-  FlutterPrintDuplexMode* duplex_mode =
-      options ? flutter_print_print_options_get_duplex_mode(options) : nullptr;
-  if (duplex_mode) {
-    const char* sides = nullptr;
-    switch (*duplex_mode) {
-      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_NONE:
-        sides = "one-sided";            break;
-      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_LONG_EDGE:
-        sides = "two-sided-long-edge";  break;
-      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_SHORT_EDGE:
-        sides = "two-sided-short-edge"; break;
-    }
-    if (sides)
-      num_options = cupsAddOption("sides", sides, num_options, &cups_opts);
+  if (const char* sides = duplex_sides(options)) {
+    num_options = cupsAddOption("sides", sides, num_options, &cups_opts);
   }
 
   FlutterPrintPageSize* page_size =
@@ -186,36 +177,31 @@ static void handle_print(
       if (width && height && *width > 0 && *height > 0) {
         int w_pts = (int)(*width  * 72.0 / 25.4 + 0.5);
         int h_pts = (int)(*height * 72.0 / 25.4 + 0.5);
-        gchar* custom = g_strdup_printf("Custom.%dx%d", w_pts, h_pts);
+        g_autofree gchar* custom = g_strdup_printf("Custom.%dx%d", w_pts, h_pts);
         num_options = cupsAddOption("media", custom, num_options, &cups_opts);
-        g_free(custom);
       }
     }
   }
 
-  gchar* page_ranges = build_page_ranges(options);
+  g_autofree gchar* page_ranges = build_page_ranges(options);
   if (page_ranges) {
     num_options = cupsAddOption("page-ranges", page_ranges, num_options,
                                 &cups_opts);
-    g_free(page_ranges);
   }
 
   // For formats CUPS cannot rasterise (WebP, HEIC), transcode to PNG first
   // using GDK-Pixbuf, which supports these formats when the system pixbuf
   // loaders are installed (webp-pixbuf-loader, heif-pixbuf-loader).
-  gchar* transcoded = needs_transcode(file_path)
-                          ? transcode_to_png(file_path)
-                          : nullptr;
+  g_autofree gchar* transcoded = needs_transcode(file_path)
+                                     ? transcode_to_png(file_path)
+                                     : nullptr;
   const char* print_path = transcoded ? transcoded : file_path;
 
   int job_id = cupsPrintFile(dest, print_path, "Flutter Print Job",
                               num_options, cups_opts);
   cupsFreeOptions(num_options, cups_opts);
 
-  if (transcoded) {
-    g_remove(transcoded);
-    g_free(transcoded);
-  }
+  if (transcoded) g_remove(transcoded);
 
   if (job_id == 0) {
     flutter_print_flutter_print_api_respond_error_print(
@@ -238,57 +224,31 @@ static void handle_print(
       options ? flutter_print_print_options_get_color(options) : nullptr;
 
   // Heap-allocated strings that must outlive the spawn call.
-  gchar* copies_str = (copies && *copies > 1)
+  g_autofree gchar* copies_str = (copies && *copies > 1)
       ? g_strdup_printf("%" G_GINT64_FORMAT, *copies) : nullptr;
 
-  gchar* page_ranges = build_page_ranges(options);
-  gchar* page_ranges_opt = page_ranges
+  g_autofree gchar* page_ranges = build_page_ranges(options);
+  g_autofree gchar* page_ranges_opt = page_ranges
       ? g_strdup_printf("page-ranges=%s", page_ranges) : nullptr;
 
-  FlutterPrintDuplexMode* duplex_mode =
-      options ? flutter_print_print_options_get_duplex_mode(options) : nullptr;
-  const char* sides = nullptr;
-  if (duplex_mode) {
-    switch (*duplex_mode) {
-      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_NONE:
-        sides = "one-sided";            break;
-      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_LONG_EDGE:
-        sides = "two-sided-long-edge";  break;
-      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_SHORT_EDGE:
-        sides = "two-sided-short-edge"; break;
-    }
-  }
+  const char* sides = duplex_sides(options);
 
-  GPtrArray* argv = g_ptr_array_new();
+  g_autoptr(GPtrArray) argv = g_ptr_array_new();
+  auto add = [&](const gchar* flag, const gchar* value) {
+    g_ptr_array_add(argv, const_cast<gchar*>(flag));
+    g_ptr_array_add(argv, const_cast<gchar*>(value));
+  };
   g_ptr_array_add(argv, const_cast<gchar*>("lp"));
-  if (printer_address && printer_address[0] != '\0') {
-    g_ptr_array_add(argv, const_cast<gchar*>("-d"));
-    g_ptr_array_add(argv, const_cast<gchar*>(printer_address));
-  }
-  if (copies_str) {
-    g_ptr_array_add(argv, const_cast<gchar*>("-n"));
-    g_ptr_array_add(argv, copies_str);
-  }
-  if (landscape && *landscape) {
-    g_ptr_array_add(argv, const_cast<gchar*>("-o"));
-    g_ptr_array_add(argv, const_cast<gchar*>("orientation-requested=4"));
-  }
-  if (color && !*color) {
-    g_ptr_array_add(argv, const_cast<gchar*>("-o"));
-    g_ptr_array_add(argv, const_cast<gchar*>("print-color-mode=monochrome"));
-  }
-  if (sides) {
-    g_ptr_array_add(argv, const_cast<gchar*>("-o"));
-    g_ptr_array_add(argv, const_cast<gchar*>(sides));
-  }
-  if (page_ranges_opt) {
-    g_ptr_array_add(argv, const_cast<gchar*>("-o"));
-    g_ptr_array_add(argv, page_ranges_opt);
-  }
+  if (printer_address && printer_address[0] != '\0') add("-d", printer_address);
+  if (copies_str) add("-n", copies_str);
+  if (landscape && *landscape) add("-o", "orientation-requested=4");
+  if (color && !*color) add("-o", "print-color-mode=monochrome");
+  if (sides) add("-o", sides);
+  if (page_ranges_opt) add("-o", page_ranges_opt);
   g_ptr_array_add(argv, const_cast<gchar*>(file_path));
   g_ptr_array_add(argv, nullptr);
 
-  GError* err = nullptr;
+  g_autoptr(GError) err = nullptr;
   gint exit_status = 0;
   bool ok = g_spawn_sync(nullptr,
                          reinterpret_cast<gchar**>(argv->pdata),
@@ -297,11 +257,6 @@ static void handle_print(
                          nullptr, nullptr,
                          nullptr, nullptr,
                          &exit_status, &err);
-  g_ptr_array_free(argv, FALSE);
-  g_free(copies_str);
-  g_free(page_ranges);
-  g_free(page_ranges_opt);
-  g_clear_error(&err);
 
   if (!ok || exit_status != 0) {
     flutter_print_flutter_print_api_respond_error_print(
@@ -359,23 +314,24 @@ static gpointer list_printers_worker(gpointer user_data) {
   int num_dests = cupsGetDests(&dests);
 
   for (int i = 0; i < num_dests; i++) {
+    const cups_dest_t& dest = dests[i];
+    auto option = [&dest](const char* name) {
+      return cupsGetOption(name, dest.num_options, dest.options);
+    };
+
     // label: human-readable name (printer-info), fallback to queue name.
-    const char* info_str = cupsGetOption("printer-info",
-                                          dests[i].num_options,
-                                          dests[i].options);
+    const char* info_str = option("printer-info");
     const gchar* label = (info_str && info_str[0] != '\0')
                              ? info_str
-                             : dests[i].name;
+                             : dest.name;
 
     // address: CUPS queue name — what gets passed to cupsPrintFile / lp -d.
-    const gchar* address = dests[i].name;
+    const gchar* address = dest.name;
 
     // colorCapability
     FlutterPrintColorCapability color_capability =
         FLUTTER_PRINT_PLATFORM_INTERFACE_COLOR_CAPABILITY_UNKNOWN;
-    const char* color_str = cupsGetOption("color-supported",
-                                           dests[i].num_options,
-                                           dests[i].options);
+    const char* color_str = option("color-supported");
     if (color_str) {
       color_capability = (strcmp(color_str, "true") == 0)
           ? FLUTTER_PRINT_PLATFORM_INTERFACE_COLOR_CAPABILITY_SUPPORTED
@@ -385,9 +341,7 @@ static gpointer list_printers_worker(gpointer user_data) {
     // supportsDuplex: check sides-supported attribute.
     gboolean duplex_val = FALSE;
     gboolean* duplex_ptr = nullptr;
-    const char* sides_str = cupsGetOption("sides-supported",
-                                           dests[i].num_options,
-                                           dests[i].options);
+    const char* sides_str = option("sides-supported");
     if (sides_str) {
       duplex_val = (strstr(sides_str, "two-sided") != nullptr);
       duplex_ptr = &duplex_val;
@@ -404,9 +358,7 @@ static gpointer list_printers_worker(gpointer user_data) {
     // printer-state: 3=idle, 4=processing, 5=stopped/offline.
     gboolean avail_val = FALSE;
     gboolean* avail_ptr = nullptr;
-    const char* state_str = cupsGetOption("printer-state",
-                                          dests[i].num_options,
-                                          dests[i].options);
+    const char* state_str = option("printer-state");
     if (state_str) {
       int state = atoi(state_str);
       avail_val = (state == 3 || state == 4);
@@ -416,7 +368,7 @@ static gpointer list_printers_worker(gpointer user_data) {
     // Build PrinterInfo — also uses the generated constructor.
     g_autoptr(FlutterPrintPrinterInfo) printer_info =
         flutter_print_printer_info_new(label, address, nullptr,
-                                       dests[i].is_default != 0, caps,
+                                       dest.is_default != 0, caps,
                                        avail_ptr);
 
     fl_value_append_take(list,

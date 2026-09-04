@@ -1,16 +1,23 @@
 import Cocoa
 import PDFKit
 
+/// Largest rect with [size]'s aspect ratio that fits centred in [rect].
+private func aspectFit(_ size: NSSize, in rect: NSRect) -> NSRect {
+  let scale = min(rect.width / size.width, rect.height / size.height)
+  let w = size.width * scale, h = size.height * scale
+  return NSRect(x: rect.midX - w / 2, y: rect.midY - h / 2, width: w, height: h)
+}
+
 class ImagePrintView: NSView {
   let image: NSImage
   /// Area within the sheet the image is allowed to occupy (paper size minus
   /// the requested margins), in the view's coordinate system.
   private let contentRect: NSRect
 
-  init(image: NSImage, bounds: NSRect, contentRect: NSRect) {
+  init(image: NSImage, paperSize: NSSize, contentRect: NSRect) {
     self.image = image
     self.contentRect = contentRect
-    super.init(frame: bounds)
+    super.init(frame: NSRect(origin: .zero, size: paperSize))
   }
 
   required init?(coder: NSCoder) { fatalError() }
@@ -23,15 +30,9 @@ class ImagePrintView: NSView {
   override func rectForPage(_ page: Int) -> NSRect { bounds }
 
   override func draw(_ dirtyRect: NSRect) {
-    let imgSize = image.size
-    guard imgSize.width > 0, imgSize.height > 0 else { return }
-    let scale = min(contentRect.width / imgSize.width, contentRect.height / imgSize.height)
-    let drawRect = NSRect(
-      x: contentRect.midX - imgSize.width  * scale / 2,
-      y: contentRect.midY - imgSize.height * scale / 2,
-      width:  imgSize.width  * scale,
-      height: imgSize.height * scale)
-    image.draw(in: drawRect, from: .zero, operation: .copy, fraction: 1)
+    guard image.size.width > 0, image.size.height > 0 else { return }
+    image.draw(in: aspectFit(image.size, in: contentRect),
+               from: .zero, operation: .copy, fraction: 1)
   }
 }
 
@@ -72,13 +73,12 @@ class PDFPagePrintView: NSView {
           let cgPage = page.pageRef else { return }
 
     let pageRect = page.bounds(for: .cropBox)
-    let target = contentRect
+    let fit = aspectFit(pageRect.size, in: contentRect)
 
     ctx.saveGState()
 
-    let s = min(target.width / pageRect.width, target.height / pageRect.height)
-    ctx.translateBy(x: target.minX + (target.width  - pageRect.width  * s) / 2,
-                    y: target.minY + (target.height - pageRect.height * s) / 2)
+    let s = fit.width / pageRect.width
+    ctx.translateBy(x: fit.minX, y: fit.minY)
     ctx.scaleBy(x: s, y: s)
     ctx.drawPDFPage(cgPage)
 

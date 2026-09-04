@@ -2,97 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 class PrintLocalizations {
-  const PrintLocalizations._(this._strings);
-
-  final _Strings _strings;
-
-  static PrintLocalizations of(BuildContext context) =>
-      Localizations.of<PrintLocalizations>(context, PrintLocalizations) ??
-      const PrintLocalizations._(_en);
-
-  static const LocalizationsDelegate<PrintLocalizations> delegate = _Delegate();
-
-  static const supportedLocales = [
-    Locale('en'),
-    Locale('fr'),
-    Locale('de'),
-    Locale('es'),
-    Locale('pt'),
-    Locale('it'),
-    Locale('nl'),
-    Locale('ru'),
-    Locale('pl'),
-    Locale('tr'),
-    Locale('ja'),
-    Locale('zh'),
-    Locale('ko'),
-    Locale('ar'),
-  ];
-
-  String get title => _strings.title;
-  String get cancel => _strings.cancel;
-  String get print => _strings.print;
-  String get printer => _strings.printer;
-  String get noPrintersFound => _strings.noPrintersFound;
-  String get copies => _strings.copies;
-  String get pages => _strings.pages;
-  String get allPages => _strings.allPages;
-  String get pageRangeCustom => _strings.pageRangeCustom;
-  String get layout => _strings.layout;
-  String get portrait => _strings.portrait;
-  String get landscape => _strings.landscape;
-  String get color => _strings.color;
-  String get colorMode => _strings.colorMode;
-  String get grayscale => _strings.grayscale;
-  String get paperSize => _strings.paperSize;
-  String get twoSided => _strings.twoSided;
-  String get off => _strings.off;
-  String get longEdge => _strings.longEdge;
-  String get shortEdge => _strings.shortEdge;
-  String get previewUnavailable => _strings.previewUnavailable;
-  String get noPreview => _strings.noPreview;
-
-  String printerDisplayName(String name, {required bool isDefault}) => isDefault
-      ? _strings.defaultPrinterFormat.replaceFirst('{name}', name)
-      : name;
-}
-
-class _Delegate extends LocalizationsDelegate<PrintLocalizations> {
-  const _Delegate();
-
-  @override
-  bool isSupported(Locale locale) => PrintLocalizations.supportedLocales.any(
-    (l) => l.languageCode == locale.languageCode,
-  );
-
-  @override
-  Future<PrintLocalizations> load(Locale locale) => SynchronousFuture(
-    PrintLocalizations._(_stringsForLocale(locale.languageCode)),
-  );
-
-  @override
-  bool shouldReload(_Delegate old) => false;
-}
-
-_Strings _stringsForLocale(String code) => switch (code) {
-  'fr' => _fr,
-  'de' => _de,
-  'es' => _es,
-  'pt' => _pt,
-  'it' => _it,
-  'nl' => _nl,
-  'ru' => _ru,
-  'pl' => _pl,
-  'tr' => _tr,
-  'ja' => _ja,
-  'zh' => _zh,
-  'ko' => _ko,
-  'ar' => _ar,
-  _ => _en,
-};
-
-class _Strings {
-  const _Strings({
+  const PrintLocalizations._({
     required this.title,
     required this.cancel,
     required this.print,
@@ -115,8 +25,12 @@ class _Strings {
     required this.longEdge,
     required this.shortEdge,
     required this.previewUnavailable,
-    required this.noPreview,
   });
+
+  static PrintLocalizations of(BuildContext context) =>
+      Localizations.of<PrintLocalizations>(context, PrintLocalizations) ?? _en;
+
+  static const LocalizationsDelegate<PrintLocalizations> delegate = _Delegate();
 
   final String title;
   final String cancel;
@@ -140,14 +54,48 @@ class _Strings {
   final String longEdge;
   final String shortEdge;
   final String previewUnavailable;
-  final String noPreview;
+
+  String printerDisplayName(String name, {required bool isDefault}) =>
+      isDefault ? defaultPrinterFormat.replaceFirst('{name}', name) : name;
 }
+
+class _Delegate extends LocalizationsDelegate<PrintLocalizations> {
+  const _Delegate();
+
+  @override
+  bool isSupported(Locale locale) =>
+      _byLanguage.containsKey(locale.languageCode);
+
+  @override
+  Future<PrintLocalizations> load(Locale locale) =>
+      SynchronousFuture(_byLanguage[locale.languageCode] ?? _en);
+
+  @override
+  bool shouldReload(_Delegate old) => false;
+}
+
+const _byLanguage = {
+  'en': _en,
+  'fr': _fr,
+  'de': _de,
+  'es': _es,
+  'pt': _pt,
+  'it': _it,
+  'nl': _nl,
+  'ru': _ru,
+  'pl': _pl,
+  'tr': _tr,
+  'ja': _ja,
+  'zh': _zh,
+  'ko': _ko,
+  'ar': _ar,
+};
 
 // ---------------------------------------------------------------------------
 // English
 // ---------------------------------------------------------------------------
 
-const _en = _Strings(
+const _en = PrintLocalizations._(
   title: 'Print',
   cancel: 'Cancel',
   print: 'Print',
@@ -170,14 +118,13 @@ const _en = _Strings(
   longEdge: 'Long edge',
   shortEdge: 'Short edge',
   previewUnavailable: 'Preview unavailable',
-  noPreview: 'No preview for this file type',
 );
 
 // ---------------------------------------------------------------------------
 // French
 // ---------------------------------------------------------------------------
 
-const _fr = _Strings(
+const _fr = PrintLocalizations._(
   title: 'Imprimer',
   cancel: 'Annuler',
   print: 'Imprimer',
@@ -200,14 +147,13 @@ const _fr = _Strings(
   longEdge: 'Bord long',
   shortEdge: 'Bord court',
   previewUnavailable: 'Aperçu non disponible',
-  noPreview: 'Aucun aperçu pour ce type de fichier',
 );
 
 // ---------------------------------------------------------------------------
 // German
 // ---------------------------------------------------------------------------
 
-const _de = _Strings(
+const _de = PrintLocalizations._(
   title: 'Drucken',
   cancel: 'Abbrechen',
   print: 'Drucken',
@@ -230,14 +176,13 @@ const _de = _Strings(
   longEdge: 'Lange Kante',
   shortEdge: 'Kurze Kante',
   previewUnavailable: 'Vorschau nicht verfügbar',
-  noPreview: 'Keine Vorschau für diesen Dateityp',
 );
 
 // ---------------------------------------------------------------------------
 // Spanish
 // ---------------------------------------------------------------------------
 
-const _es = _Strings(
+const _es = PrintLocalizations._(
   title: 'Imprimir',
   cancel: 'Cancelar',
   print: 'Imprimir',
@@ -260,14 +205,13 @@ const _es = _Strings(
   longEdge: 'Borde largo',
   shortEdge: 'Borde corto',
   previewUnavailable: 'Vista previa no disponible',
-  noPreview: 'Sin vista previa para este tipo de archivo',
 );
 
 // ---------------------------------------------------------------------------
 // Portuguese
 // ---------------------------------------------------------------------------
 
-const _pt = _Strings(
+const _pt = PrintLocalizations._(
   title: 'Imprimir',
   cancel: 'Cancelar',
   print: 'Imprimir',
@@ -290,14 +234,13 @@ const _pt = _Strings(
   longEdge: 'Borda longa',
   shortEdge: 'Borda curta',
   previewUnavailable: 'Pré-visualização indisponível',
-  noPreview: 'Sem pré-visualização para este tipo de arquivo',
 );
 
 // ---------------------------------------------------------------------------
 // Italian
 // ---------------------------------------------------------------------------
 
-const _it = _Strings(
+const _it = PrintLocalizations._(
   title: 'Stampa',
   cancel: 'Annulla',
   print: 'Stampa',
@@ -320,14 +263,13 @@ const _it = _Strings(
   longEdge: 'Bordo lungo',
   shortEdge: 'Bordo corto',
   previewUnavailable: 'Anteprima non disponibile',
-  noPreview: 'Nessuna anteprima per questo tipo di file',
 );
 
 // ---------------------------------------------------------------------------
 // Dutch
 // ---------------------------------------------------------------------------
 
-const _nl = _Strings(
+const _nl = PrintLocalizations._(
   title: 'Afdrukken',
   cancel: 'Annuleren',
   print: 'Afdrukken',
@@ -350,14 +292,13 @@ const _nl = _Strings(
   longEdge: 'Lange zijde',
   shortEdge: 'Korte zijde',
   previewUnavailable: 'Voorbeeld niet beschikbaar',
-  noPreview: 'Geen voorbeeld voor dit bestandstype',
 );
 
 // ---------------------------------------------------------------------------
 // Russian
 // ---------------------------------------------------------------------------
 
-const _ru = _Strings(
+const _ru = PrintLocalizations._(
   title: 'Печать',
   cancel: 'Отмена',
   print: 'Печать',
@@ -380,14 +321,13 @@ const _ru = _Strings(
   longEdge: 'Длинная сторона',
   shortEdge: 'Короткая сторона',
   previewUnavailable: 'Предпросмотр недоступен',
-  noPreview: 'Нет предпросмотра для этого типа файла',
 );
 
 // ---------------------------------------------------------------------------
 // Polish
 // ---------------------------------------------------------------------------
 
-const _pl = _Strings(
+const _pl = PrintLocalizations._(
   title: 'Drukuj',
   cancel: 'Anuluj',
   print: 'Drukuj',
@@ -410,14 +350,13 @@ const _pl = _Strings(
   longEdge: 'Długa krawędź',
   shortEdge: 'Krótka krawędź',
   previewUnavailable: 'Podgląd niedostępny',
-  noPreview: 'Brak podglądu dla tego typu pliku',
 );
 
 // ---------------------------------------------------------------------------
 // Turkish
 // ---------------------------------------------------------------------------
 
-const _tr = _Strings(
+const _tr = PrintLocalizations._(
   title: 'Yazdır',
   cancel: 'İptal',
   print: 'Yazdır',
@@ -440,14 +379,13 @@ const _tr = _Strings(
   longEdge: 'Uzun kenar',
   shortEdge: 'Kısa kenar',
   previewUnavailable: 'Önizleme kullanılamıyor',
-  noPreview: 'Bu dosya türü için önizleme yok',
 );
 
 // ---------------------------------------------------------------------------
 // Japanese
 // ---------------------------------------------------------------------------
 
-const _ja = _Strings(
+const _ja = PrintLocalizations._(
   title: '印刷',
   cancel: 'キャンセル',
   print: '印刷',
@@ -470,14 +408,13 @@ const _ja = _Strings(
   longEdge: '長辺とじ',
   shortEdge: '短辺とじ',
   previewUnavailable: 'プレビューを表示できません',
-  noPreview: 'このファイル形式はプレビューに対応していません',
 );
 
 // ---------------------------------------------------------------------------
 // Chinese (Simplified)
 // ---------------------------------------------------------------------------
 
-const _zh = _Strings(
+const _zh = PrintLocalizations._(
   title: '打印',
   cancel: '取消',
   print: '打印',
@@ -500,14 +437,13 @@ const _zh = _Strings(
   longEdge: '长边翻转',
   shortEdge: '短边翻转',
   previewUnavailable: '预览不可用',
-  noPreview: '此文件类型没有预览',
 );
 
 // ---------------------------------------------------------------------------
 // Korean
 // ---------------------------------------------------------------------------
 
-const _ko = _Strings(
+const _ko = PrintLocalizations._(
   title: '인쇄',
   cancel: '취소',
   print: '인쇄',
@@ -530,14 +466,13 @@ const _ko = _Strings(
   longEdge: '긴 가장자리',
   shortEdge: '짧은 가장자리',
   previewUnavailable: '미리보기를 사용할 수 없습니다',
-  noPreview: '이 파일 형식은 미리보기를 지원하지 않습니다',
 );
 
 // ---------------------------------------------------------------------------
 // Arabic
 // ---------------------------------------------------------------------------
 
-const _ar = _Strings(
+const _ar = PrintLocalizations._(
   title: 'طباعة',
   cancel: 'إلغاء',
   print: 'طباعة',
@@ -560,5 +495,4 @@ const _ar = _Strings(
   longEdge: 'الحافة الطويلة',
   shortEdge: 'الحافة القصيرة',
   previewUnavailable: 'المعاينة غير متاحة',
-  noPreview: 'لا توجد معاينة لهذا النوع من الملفات',
 );

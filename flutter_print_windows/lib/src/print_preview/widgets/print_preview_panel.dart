@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io' show File, Platform;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/services.dart' show FontLoader;
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_print_platform_interface/flutter_print_platform_interface.dart';
@@ -66,64 +67,49 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
       if (mounted) setState(() => _minimumMargins = null);
       return;
     }
-    final pageSize = widget.options.pageSize;
-    final w = pageSize?.width ?? 210.0;
-    final h = pageSize?.height ?? 297.0;
-    final landscape = widget.options.landscape ?? false;
+    final (w, h) = _paperMm;
     final margins = await WindowsPrintChannel.getMinimumMargins(
       printerName: printer,
-      paperSizeName: pageSize?.name,
-      paperWidth: landscape ? h : w,
-      paperHeight: landscape ? w : h,
+      paperSizeName: widget.options.pageSize?.name,
+      paperWidth: w,
+      paperHeight: h,
     );
     if (mounted) setState(() => _minimumMargins = margins);
   }
 
+  /// Oriented paper width and height in mm (A4 when unset).
+  (double, double) get _paperMm {
+    final w = widget.options.pageSize?.width ?? 210.0;
+    final h = widget.options.pageSize?.height ?? 297.0;
+    return (widget.options.landscape ?? false) ? (h, w) : (w, h);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final (paperW, paperH) = _paperMm;
+    Widget paper(Widget child) => _PaperShell(
+      widthMm: paperW,
+      heightMm: paperH,
+      minimumMargins: _minimumMargins,
+      child: child,
+    );
+    final color = widget.options.color ?? true;
     final mime = widget.mimeType;
-    final double w = widget.options.pageSize?.width ?? 210.0;
-    final double h = widget.options.pageSize?.height ?? 297.0;
-    final bool landscape = widget.options.landscape ?? false;
-    final double paperW = landscape ? h : w;
-    final double paperH = landscape ? w : h;
-    final double paperAspect = paperW / paperH;
 
     if (mimeIsPdf(mime)) {
       return _PrintPdfPreview(
         filePath: widget.filePath,
         pageCount: widget.pageCount,
-        paperAspect: paperAspect,
-        paperWidthMm: paperW,
-        paperHeightMm: paperH,
-        minimumMargins: _minimumMargins,
-        color: widget.options.color ?? true,
+        color: color,
         pageRanges: widget.options.pageRanges,
+        paper: paper,
       );
     }
-
     if (mimeIsImage(mime)) {
-      return _PrintImagePreview(
-        filePath: widget.filePath,
-        paperAspect: paperAspect,
-        paperWidthMm: paperW,
-        paperHeightMm: paperH,
-        minimumMargins: _minimumMargins,
-        color: widget.options.color ?? true,
-      );
+      return paper(_PrintImagePreview(filePath: widget.filePath, color: color));
     }
-
-    if (mimeIsText(mime)) {
-      return _PrintTextPreview(
-        filePath: widget.filePath,
-        paperAspect: paperAspect,
-        paperWidthMm: paperW,
-        paperHeightMm: paperH,
-        minimumMargins: _minimumMargins,
-      );
-    }
-
-    return _PrintUnknownPreview(paperAspect: paperAspect);
+    // The dialog only opens for PDF, image and text files.
+    return paper(_PrintTextPreview(filePath: widget.filePath));
   }
 }
 
@@ -133,68 +119,49 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
 
 class _PaperShell extends StatelessWidget {
   const _PaperShell({
-    required this.paperAspect,
+    required this.widthMm,
+    required this.heightMm,
+    required this.minimumMargins,
     required this.child,
-    this.paperWidthMm = 210.0,
-    this.paperHeightMm = 297.0,
-    this.minimumMargins,
   });
 
-  final double paperAspect;
-  final Widget child;
-  final double paperWidthMm;
-  final double paperHeightMm;
+  final double widthMm;
+  final double heightMm;
   final PageMargins? minimumMargins;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
     final theme = FluentTheme.of(context);
-    final margins = minimumMargins;
-    return Expanded(
-      child: Center(
-        child: AspectRatio(
-          aspectRatio: paperAspect,
-          child: Container(
-            decoration: BoxDecoration(
-              color: theme.resources.cardBackgroundFillColorDefault,
-              border: Border.all(color: theme.resources.cardStrokeColorDefault),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Padding(
-                      padding: _getContentPadding(constraints, margins),
-                      child: child,
-                    ),
-                  ],
-                );
-              },
-            ),
+    final m = minimumMargins;
+    return Center(
+      child: AspectRatio(
+        aspectRatio: widthMm / heightMm,
+        child: Container(
+          decoration: BoxDecoration(
+            color: theme.resources.cardBackgroundFillColorDefault,
+            border: Border.all(color: theme.resources.cardStrokeColorDefault),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final pw = constraints.maxWidth;
+              final ph = constraints.maxHeight;
+              return Padding(
+                padding: m == null
+                    ? EdgeInsets.zero
+                    : EdgeInsets.fromLTRB(
+                        m.left / widthMm * pw,
+                        m.top / heightMm * ph,
+                        m.right / widthMm * pw,
+                        m.bottom / heightMm * ph,
+                      ),
+                child: child,
+              );
+            },
           ),
         ),
       ),
-    );
-  }
-
-  EdgeInsets _getContentPadding(
-    BoxConstraints constraints,
-    PageMargins? margins,
-  ) {
-    if (margins == null) {
-      return EdgeInsets.zero;
-    }
-
-    final pw = constraints.maxWidth;
-    final ph = constraints.maxHeight;
-
-    return EdgeInsets.fromLTRB(
-      (margins.left / paperWidthMm) * pw,
-      (margins.top / paperHeightMm) * ph,
-      (margins.right / paperWidthMm) * pw,
-      (margins.bottom / paperHeightMm) * ph,
     );
   }
 }
@@ -207,22 +174,16 @@ class _PrintPdfPreview extends StatefulWidget {
   const _PrintPdfPreview({
     required this.filePath,
     required this.pageCount,
-    required this.paperAspect,
-    required this.paperWidthMm,
-    required this.paperHeightMm,
-    required this.minimumMargins,
     required this.color,
     required this.pageRanges,
+    required this.paper,
   });
 
   final String filePath;
   final int? pageCount;
-  final double paperAspect;
-  final double paperWidthMm;
-  final double paperHeightMm;
-  final PageMargins? minimumMargins;
   final bool color;
   final List<PageRange>? pageRanges;
+  final Widget Function(Widget page) paper;
 
   @override
   State<_PrintPdfPreview> createState() => _PrintPdfPreviewState();
@@ -260,7 +221,10 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
       _recomputeSelection();
       _startRender();
     } else if (old.pageCount != widget.pageCount ||
-        !_sameRanges(old.pageRanges, widget.pageRanges)) {
+        !listEquals(
+          old.pageRanges ?? const [],
+          widget.pageRanges ?? const [],
+        )) {
       final shown = _selected.isEmpty ? null : _selected[_pos];
       _recomputeSelection();
       // Keep the current page when it is still selected.
@@ -271,15 +235,6 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
         _startRender();
       }
     }
-  }
-
-  bool _sameRanges(List<PageRange>? a, List<PageRange>? b) {
-    if (a == null || a.isEmpty) return b == null || b.isEmpty;
-    if (b == null || b.length != a.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i].start != b[i].start || a[i].end != b[i].end) return false;
-    }
-    return true;
   }
 
   /// Rebuilds [_selected] from the current page count and requested ranges
@@ -296,7 +251,9 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
           if (ranges.any((r) => i + 1 >= r.start && i + 1 <= r.end)) i,
       ];
     }
-    if (_pos >= _selected.length) _pos = _selected.isEmpty ? 0 : _selected.length - 1;
+    if (_pos >= _selected.length) {
+      _pos = _selected.isEmpty ? 0 : _selected.length - 1;
+    }
   }
 
   // Start rendering the page at [_pos]. The caller rebuilds.
@@ -357,13 +314,7 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _PaperShell(
-          paperAspect: widget.paperAspect,
-          paperWidthMm: widget.paperWidthMm,
-          paperHeightMm: widget.paperHeightMm,
-          minimumMargins: widget.minimumMargins,
-          child: _buildContent(context),
-        ),
+        Expanded(child: widget.paper(_buildContent(context))),
         if (_selected.length > 1)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -404,42 +355,22 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
 // ---------------------------------------------------------------------------
 
 class _PrintImagePreview extends StatelessWidget {
-  const _PrintImagePreview({
-    required this.filePath,
-    required this.paperAspect,
-    required this.paperWidthMm,
-    required this.paperHeightMm,
-    required this.minimumMargins,
-    required this.color,
-  });
+  const _PrintImagePreview({required this.filePath, required this.color});
 
   final String filePath;
-  final double paperAspect;
-  final double paperWidthMm;
-  final double paperHeightMm;
-  final PageMargins? minimumMargins;
   final bool color;
 
   @override
   Widget build(BuildContext context) {
     final l10n = PrintLocalizations.of(context);
-    Widget img = Image.file(
+    final img = Image.file(
       File(filePath),
       fit: BoxFit.contain,
       errorBuilder: (_, _, _) => Center(child: Text(l10n.previewUnavailable)),
     );
-    if (!color) img = ColorFiltered(colorFilter: _grayscaleFilter, child: img);
-    return Column(
-      children: [
-        _PaperShell(
-          paperAspect: paperAspect,
-          paperWidthMm: paperWidthMm,
-          paperHeightMm: paperHeightMm,
-          minimumMargins: minimumMargins,
-          child: img,
-        ),
-      ],
-    );
+    return color
+        ? img
+        : ColorFiltered(colorFilter: _grayscaleFilter, child: img);
   }
 }
 
@@ -448,27 +379,17 @@ class _PrintImagePreview extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _PrintTextPreview extends StatefulWidget {
-  const _PrintTextPreview({
-    required this.filePath,
-    required this.paperAspect,
-    required this.paperWidthMm,
-    required this.paperHeightMm,
-    required this.minimumMargins,
-  });
+  const _PrintTextPreview({required this.filePath});
 
   final String filePath;
-  final double paperAspect;
-  final double paperWidthMm;
-  final double paperHeightMm;
-  final PageMargins? minimumMargins;
 
   @override
   State<_PrintTextPreview> createState() => _PrintTextPreviewState();
 }
 
 class _PrintTextPreviewState extends State<_PrintTextPreview> {
-  final _lines = <String>[];
-  bool _loading = true;
+  /// Null while loading, empty when the text can't be shown.
+  List<String>? _lines;
   bool _truncated = false;
 
   static const _maxLines = 20000;
@@ -477,7 +398,7 @@ class _PrintTextPreviewState extends State<_PrintTextPreview> {
   @override
   void initState() {
     super.initState();
-    (_consolasFuture ??= _loadConsolas()).then((_) => _loadText());
+    _loadText();
   }
 
   static Future<void> _loadConsolas() async {
@@ -490,111 +411,43 @@ class _PrintTextPreviewState extends State<_PrintTextPreview> {
   }
 
   Future<void> _loadText() async {
-    if (!mounted) return;
+    // Load the font and the text concurrently; show lines once both are in.
+    final font = _consolasFuture ??= _loadConsolas();
+    var lines = const <String>[];
     try {
       final text = await WindowsPrintChannel.decodeTextFile(widget.filePath);
-      if (!mounted) return;
-      if (text == null) {
-        setState(() => _loading = false);
-        return;
-      }
-      final lines = const LineSplitter().convert(text);
-      setState(() {
-        if (lines.length > _maxLines) {
-          _lines.addAll(lines.take(_maxLines));
-          _truncated = true;
-        } else {
-          _lines.addAll(lines);
-        }
-        _loading = false;
-      });
+      if (text != null) lines = const LineSplitter().convert(text);
+      await font;
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      // Show the preview as unavailable.
     }
+    if (!mounted) return;
+    setState(() {
+      _truncated = lines.length > _maxLines;
+      _lines = _truncated ? lines.take(_maxLines).toList() : lines;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final l10n = PrintLocalizations.of(context);
-    final Widget child;
-
-    if (_lines.isEmpty) {
-      child = _loading
-          ? const Center(child: ProgressRing())
-          : Center(child: Text(l10n.previewUnavailable));
-    } else {
-      const style = TextStyle(fontSize: 10, fontFamily: 'Consolas');
-      child = ListView.builder(
-        itemCount: _lines.length + (_loading || _truncated ? 1 : 0),
-        itemBuilder: (context, i) {
-          if (i == _lines.length) {
-            return _loading
-                ? const Center(child: ProgressRing())
-                : Center(
-                    child: Text(
-                      '— preview truncated at $_maxLines lines —',
-                      style: style.copyWith(fontStyle: FontStyle.italic),
-                    ),
-                  );
-          }
-          return Text(_lines[i], style: style);
-        },
+    final lines = _lines;
+    if (lines == null) return const Center(child: ProgressRing());
+    if (lines.isEmpty) {
+      return Center(
+        child: Text(PrintLocalizations.of(context).previewUnavailable),
       );
     }
-
-    return Column(
-      children: [
-        _PaperShell(
-          paperAspect: widget.paperAspect,
-          paperWidthMm: widget.paperWidthMm,
-          paperHeightMm: widget.paperHeightMm,
-          minimumMargins: widget.minimumMargins,
-          child: child,
-        ),
-      ],
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Unknown content (no preview available)
-// ---------------------------------------------------------------------------
-
-class _PrintUnknownPreview extends StatelessWidget {
-  const _PrintUnknownPreview({required this.paperAspect});
-
-  final double paperAspect;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = FluentTheme.of(context);
-    final l10n = PrintLocalizations.of(context);
-
-    return Column(
-      children: [
-        _PaperShell(
-          paperAspect: paperAspect,
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  FluentIcons.document,
-                  size: 64,
-                  color: theme.resources.textFillColorSecondary,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  l10n.noPreview,
-                  style: theme.typography.body?.apply(
-                    color: theme.resources.textFillColorSecondary,
-                  ),
-                ),
-              ],
+    const style = TextStyle(fontSize: 10, fontFamily: 'Consolas');
+    return ListView.builder(
+      itemCount: lines.length + (_truncated ? 1 : 0),
+      itemBuilder: (context, i) => i < lines.length
+          ? Text(lines[i], style: style)
+          : Center(
+              child: Text(
+                '— preview truncated at $_maxLines lines —',
+                style: style.copyWith(fontStyle: FontStyle.italic),
+              ),
             ),
-          ),
-        ),
-      ],
     );
   }
 }

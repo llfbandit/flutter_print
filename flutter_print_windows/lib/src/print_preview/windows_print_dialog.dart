@@ -76,19 +76,13 @@ Future<void> showWindowsPrintDialog(
 // looks unexpectedly faded. Override it to match primary so hover only
 // changes the background, not the text opacity.
 FluentThemeData _buildTheme(Brightness brightness) {
-  if (brightness == Brightness.dark) {
-    final base = FluentThemeData.dark();
-    return base.copyWith(
-      resources: ResourceDictionary.dark(
-        textFillColorSecondary: base.resources.textFillColorPrimary,
-      ),
-    );
-  }
-  final base = FluentThemeData.light();
+  final dark = brightness == Brightness.dark;
+  final base = dark ? FluentThemeData.dark() : FluentThemeData.light();
+  final text = base.resources.textFillColorPrimary;
   return base.copyWith(
-    resources: ResourceDictionary.light(
-      textFillColorSecondary: base.resources.textFillColorPrimary,
-    ),
+    resources: dark
+        ? ResourceDictionary.dark(textFillColorSecondary: text)
+        : ResourceDictionary.light(textFillColorSecondary: text),
   );
 }
 
@@ -209,7 +203,7 @@ class _PrintDialogState extends State<_PrintDialog> {
   }
 
   void _print() {
-    if (_printing || _options.printerAddress == null || !_pagesValid) return;
+    if (_printing) return;
     _printing = true;
     Navigator.of(context, rootNavigator: true).pop(_options);
   }

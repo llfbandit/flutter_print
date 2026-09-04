@@ -1,10 +1,10 @@
 #include "flutter_print_utils.h"
 
 #include <urlmon.h>
+#include <winspool.h>
 #pragma comment(lib, "urlmon.lib")
 #pragma comment(lib, "ole32.lib")
-
-#include <algorithm>
+#pragma comment(lib, "winspool.lib")
 
 namespace flutter_print {
 
@@ -60,6 +60,22 @@ std::string GetMimeType(const std::wstring& path) {
   std::string mime = WideToUtf8(mimeW);
   CoTaskMemFree(mimeW);
   return mime;
+}
+
+bool IsRenderableMime(const std::string& mime) {
+  return mime.rfind("image/", 0) == 0 || mime == "application/pdf" ||
+         mime.rfind("text/", 0) == 0;
+}
+
+// ---------------------------------------------------------------------------
+// Printers
+// ---------------------------------------------------------------------------
+
+std::wstring DefaultPrinterName() {
+  WCHAR buf[512] = {};
+  DWORD sz = static_cast<DWORD>(sizeof(buf) / sizeof(WCHAR));
+  GetDefaultPrinterW(buf, &sz);
+  return buf;
 }
 
 }  // namespace flutter_print
