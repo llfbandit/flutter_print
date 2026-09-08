@@ -104,7 +104,7 @@ ignored.
 | `copies`         |         |     | ✔️   | ✔️‡     | ✔️   |     |
 | `landscape`      | ✔️      | ✔️  | ✔️   | ✔️‡    | ✔️   |    |
 | `color`          | ✔️      | ✔️  | ✔️¶  | ✔️‡    | ✔️   |    |
-| `duplexMode`     | ✔️      | ✔️  | ✔️¶  | ✔️‡    | ✔️§  |    |
+| `duplexMode`     | ✔️      | ✔️  | ✔️   | ✔️‡    | ✔️§  |    |
 
 † On iOS, with a `printerAddress` from `FlutterPrint.ios?.pickPrinter()` (e.g. `ipp://printer.local./ipp/print`).
 
@@ -113,7 +113,7 @@ All other file types are delegated to their associated application with its own 
 
 § Linux — requires CUPS.  
 
-¶ macOS — `color` and `duplexMode` can't be reflected in preview panel. 
+¶ macOS — the print panel shows the requested `color` when the printer driver has colour presets (AirPrint and most drivers). 
 
 ---
 

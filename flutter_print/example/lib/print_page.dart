@@ -40,6 +40,8 @@ class _PrintPageState extends State<PrintPage> {
   bool _landscape = false;
   bool _color = true;
   DuplexMode? _duplexMode;
+  List<PageRange>? _pageRanges;
+  String? _pagesError;
 
   // --- printer
   List<PrinterInfo> _printers = [];
@@ -94,7 +96,31 @@ class _PrintPageState extends State<PrintPage> {
     landscape: _source == _Source.widget ? false : _landscape,
     color: _color,
     duplexMode: _source == _Source.widget ? null : _duplexMode,
+    pageRanges: _pageRanges,
   );
+
+  // Parses text such as "2-6, 9". Only malformed tokens are rejected here;
+  // out-of-order or zero pages reach the plugin, which throws ArgumentError.
+  void _setPages(String text) {
+    final ranges = <PageRange>[];
+    String? error;
+    for (final token in text.split(',')) {
+      final t = token.trim();
+      if (t.isEmpty) continue;
+      final parts = t.split('-');
+      final start = int.tryParse(parts.first.trim());
+      final end = int.tryParse(parts.last.trim());
+      if (parts.length > 2 || start == null || end == null) {
+        error = 'Invalid token "$t"';
+        break;
+      }
+      ranges.add(PageRange(start: start, end: end));
+    }
+    setState(() {
+      _pagesError = error;
+      _pageRanges = error == null && ranges.isNotEmpty ? ranges : null;
+    });
+  }
 
   // ---------------------------------------------------------------------------
 
@@ -173,6 +199,7 @@ class _PrintPageState extends State<PrintPage> {
     required bool directPrint,
   }) async {
     if (_busy) return;
+    if (_pagesError != null) return _showError(_pagesError!);
     setState(() {
       _busy = true;
       _status = null;
@@ -219,6 +246,8 @@ class _PrintPageState extends State<PrintPage> {
       _show(directPrint ? 'Job submitted' : 'Dialog closed');
     } on PlatformException catch (e) {
       _showError(e.message ?? 'print failed');
+    } on ArgumentError catch (e) {
+      _showError('${e.message}: ${e.invalidValue}');
     } finally {
       setState(() => _busy = false);
     }
@@ -350,6 +379,15 @@ class _PrintPageState extends State<PrintPage> {
                     ),
                   ],
                   onChanged: (v) => setState(() => _duplexMode = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  decoration: InputDecoration(
+                    labelText: 'Pages',
+                    hintText: 'All — e.g. 2-6, 9',
+                    errorText: _pagesError,
+                  ),
+                  onChanged: _setPages,
                 ),
               ],
             ),

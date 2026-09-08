@@ -2,6 +2,7 @@
 * feat: Add page range print option (Windows, macOS, Linux).
 * feat: Sort and merge page ranges. Throw ArgumentError on invalid ranges.
 * feat(macos): Fail with INVALID_PAGE_RANGE when no page matches.
+* fix(macos): Apply all print options in the print panel (colour, duplex, copies, page range) and follow paper changes made there.
 
 ## 0.4.0
 * feat: Make print options nullable to get system defaults.

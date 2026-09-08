@@ -8,26 +8,50 @@ private func aspectFit(_ size: NSSize, in rect: NSRect) -> NSRect {
   return NSRect(x: rect.midX - w / 2, y: rect.midY - h / 2, width: w, height: h)
 }
 
-class ImagePrintView: NSView {
-  let image: NSImage
-  /// Area within the sheet the image is allowed to occupy (paper size minus
-  /// the requested margins), in the view's coordinate system.
-  private let contentRect: NSRect
+/// A one-sheet-per-page print view sized to the print operation's paper.
+/// Paper and margins are re-read on every pagination, so changes made in the
+/// print panel (paper size, orientation) apply to the preview and the output.
+class PaperPrintView: NSView {
+  /// Area within the sheet content is scaled into (paper size minus the
+  /// requested margins), in the view's coordinate system.
+  private(set) var contentRect: NSRect
 
-  init(image: NSImage, paperSize: NSSize, contentRect: NSRect) {
-    self.image = image
-    self.contentRect = contentRect
-    super.init(frame: NSRect(origin: .zero, size: paperSize))
+  /// Number of sheets the view prints.
+  var pageCount: Int { 1 }
+
+  init(paperSize: NSSize) {
+    contentRect = NSRect(origin: .zero, size: paperSize)
+    super.init(frame: contentRect)
   }
 
   required init?(coder: NSCoder) { fatalError() }
 
   override func knowsPageRange(_ range: NSRangePointer) -> Bool {
-    range.pointee = NSMakeRange(1, 1)
+    if let info = NSPrintOperation.current?.printInfo {
+      let paper = info.paperSize
+      setFrameSize(paper)
+      contentRect = NSRect(
+        x: info.leftMargin,
+        y: info.bottomMargin,
+        width:  max(0, paper.width  - info.leftMargin - info.rightMargin),
+        height: max(0, paper.height - info.topMargin  - info.bottomMargin))
+    }
+    range.pointee = NSMakeRange(1, pageCount)
     return true
   }
 
   override func rectForPage(_ page: Int) -> NSRect { bounds }
+}
+
+class ImagePrintView: PaperPrintView {
+  let image: NSImage
+
+  init(image: NSImage, paperSize: NSSize) {
+    self.image = image
+    super.init(paperSize: paperSize)
+  }
+
+  required init?(coder: NSCoder) { fatalError() }
 
   override func draw(_ dirtyRect: NSRect) {
     guard image.size.width > 0, image.size.height > 0 else { return }
@@ -36,35 +60,28 @@ class ImagePrintView: NSView {
   }
 }
 
-class PDFPagePrintView: NSView {
+class PDFPagePrintView: PaperPrintView {
   let document: PDFDocument
   /// 0-based indices of the document pages to print, in output order. Lets the
   /// print job skip pages (and support discontinuous selections like 2–6,9,15)
   /// while NSView still sees a contiguous 1..pages.count range.
   private let pages: [Int]
-  /// Area within the sheet each page is scaled into (paper size minus the
-  /// requested margins), in the view's coordinate system.
-  private let contentRect: NSRect
   private var currentPage = 0
 
-  init(document: PDFDocument, pages: [Int], paperSize: NSSize, contentRect: NSRect) {
+  init(document: PDFDocument, pages: [Int], paperSize: NSSize) {
     self.document = document
     self.pages = pages
-    self.contentRect = contentRect
-    super.init(frame: NSRect(origin: .zero, size: paperSize))
+    super.init(paperSize: paperSize)
   }
 
   required init?(coder: NSCoder) { fatalError() }
 
-  override func knowsPageRange(_ range: NSRangePointer) -> Bool {
-    range.pointee = NSMakeRange(1, pages.count)
-    return true
-  }
+  override var pageCount: Int { pages.count }
 
   override func rectForPage(_ page: Int) -> NSRect {
     // `page` is the 1-based output position; map it to the document page index.
     currentPage = pages[page - 1]
-    return bounds
+    return super.rectForPage(page)
   }
 
   override func draw(_ dirtyRect: NSRect) {
