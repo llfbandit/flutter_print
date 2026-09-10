@@ -1,9 +1,8 @@
 import Cocoa
 import FlutterMacOS
 import PDFKit
+import UniformTypeIdentifiers
 
-/// Boxes a Pigeon completion so it can be passed through the Objective-C
-/// `contextInfo` pointer of `NSPrintOperation.runModal(for:delegate:didRun:contextInfo:)`.
 private let mmToPts = 72.0 / 25.4
 
 /// Well-known paper sizes in portrait millimetres, keyed by `PageSize.name`.
@@ -22,6 +21,8 @@ private let paperSizesMm: [String: (Double, Double)] = [
   "C5": (162, 229), "DL": (110, 220),
 ]
 
+/// Boxes a Pigeon completion so it can be passed through the Objective-C
+/// `contextInfo` pointer of `NSPrintOperation.runModal(for:delegate:didRun:contextInfo:)`.
 private final class PrintCompletionBox {
   let completion: (Result<Void, Error>) -> Void
   init(_ completion: @escaping (Result<Void, Error>) -> Void) {
@@ -57,33 +58,45 @@ extension FlutterPrintPlugin {
                                         message: "Cannot open PDF")))
         return
       }
-      printRendered(options: options, showPanel: showPanel,
-                    pageCount: doc.pageCount, completion: completion) { pages, paper in
-        PDFPagePrintView(document: doc, pages: pages, paperSize: paper)
+      printRendered(options: options, showPanel: showPanel, completion: completion) {
+        PDFPagePrintView(document: doc, paperSize: $0)
       }
     } else if let image = NSImage(contentsOf: fileURL) {
-      printRendered(options: options, showPanel: showPanel,
-                    pageCount: 1, completion: completion) { _, paper in
-        ImagePrintView(image: image, paperSize: paper)
+      printRendered(options: options, showPanel: showPanel, completion: completion) {
+        ImagePrintView(image: image, paperSize: $0)
+      }
+    } else if let text = readDocument(fileURL) {
+      printRendered(options: options, showPanel: showPanel, completion: completion) {
+        DocumentPrintView(text: text, paperSize: $0)
       }
     } else if showPanel {
+      // No native renderer: let the default app preview and print it.
       openInDefaultApp(fileURL, errorCode: "PREVIEW_ERROR", completion: completion)
     } else {
-      // No native renderer for this file type. Try a silent CUPS job via lp;
-      // if that's blocked (e.g. the app is sandboxed, which forbids spawning
-      // /usr/bin/lp), fall back to handing the file to its default app.
-      printViaLp(url: fileURL, options: options) { result in
-        switch result {
-        case .launchFailed:
-          self.openInDefaultApp(fileURL, errorCode: "PRINT_ERROR", completion: completion)
-        case .completed(0):
-          completion(.success(()))
-        case .completed(let status):
-          completion(.failure(PigeonError(code: "PRINT_ERROR",
-                                          message: "lp exited with status \(status)")))
-        }
-      }
+      // Opening the default app would not print, so fail rather than report
+      // a success.
+      completion(.failure(PigeonError(code: "UNSUPPORTED_FILE",
+                                      message: "File type not supported for printing")))
     }
+  }
+
+  /// Reads any document AppKit can import (plain text, RTF, HTML, Word,
+  /// OpenDocument…) as styled text, or returns nil. AppKit reads files it
+  /// can't parse as raw plain text, so plain text is only accepted from files
+  /// whose type is text.
+  private func readDocument(_ url: URL) -> NSAttributedString? {
+    guard #available(macOS 11, *),
+          let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType
+    else { return nil }
+    let isText = type.conforms(to: .text)
+    // Skip media, archives and other non-documents: AppKit would read them
+    // whole as plain text before we could reject them.
+    guard isText || type.conforms(to: .compositeContent) else { return nil }
+    var attrs: NSDictionary?
+    guard let text = try? NSAttributedString(url: url, options: [:], documentAttributes: &attrs),
+          let kind = attrs?[NSAttributedString.DocumentAttributeKey.documentType]
+            as? NSAttributedString.DocumentType else { return nil }
+    return kind != .plain || isText ? text : nil
   }
 
   /// Hands [fileURL] to its default application, reporting whether the open
@@ -146,8 +159,7 @@ extension FlutterPrintPlugin {
     if let color = options?.color {
       // Force greyscale output when colour is disabled. Entries added to
       // printSettings are forwarded to the print job as CUPS options, so this
-      // mirrors the `print-color-mode` option used by the lp fallback and lets
-      // the direct (no-panel) PDF/image path honour `color` as well.
+      // works for any driver, including ones without colour presets.
       if !color { info.printSettings["print-color-mode"] = "monochrome" }
       // The print panel ignores that CUPS option; set the driver's own colour
       // option so the panel shows the requested mode.
@@ -227,49 +239,41 @@ extension FlutterPrintPlugin {
     }
   }
 
-  /// Resolves [ranges] into a sorted list of 0-based document page indices to
-  /// print. Returns every page (`0..<pageCount`) when [ranges] is nil or empty,
-  /// and nil when the selection matches no page in the document.
-  private func selectedPageIndices(ranges: [PageRange]?, pageCount: Int) -> [Int]? {
-    guard let ranges, !ranges.isEmpty else { return Array(0..<pageCount) }
-    let pages = (0..<pageCount).filter { idx in
-      let page = Int64(idx + 1)
-      return ranges.contains { page >= $0.start && page <= $0.end }
-    }
-    return pages.isEmpty ? nil : pages
-  }
-
   private func printRendered(
     options: PrintOptions?,
     showPanel: Bool,
-    pageCount: Int,
     completion: @escaping (Result<Void, Error>) -> Void,
-    makeView: ([Int], NSSize) -> NSView
+    makeView: (NSSize) -> PaperPrintView
   ) {
-    guard let pages = selectedPageIndices(ranges: options?.pageRanges, pageCount: pageCount)
-    else {
+    let (printInfo, defaults) = buildPrintInfo(options: options)
+    // Paginate now: a text document's page count depends on paper and margins.
+    // The view paginates again when printing (see PaperPrintView).
+    let view = makeView(printInfo.paperSize)
+    view.layOut(for: printInfo)
+    // Reversed ranges would trap; FlutterPrint already rejects them.
+    let ranges = (options?.pageRanges ?? []).compactMap {
+      $0.start <= $0.end ? Int($0.start)...Int($0.end) : nil
+    }
+    view.pageRanges = ranges
+    guard let first = view.pages.first, let last = view.pages.last else {
       completion(.failure(PigeonError(code: "INVALID_PAGE_RANGE",
                                       message: "Page ranges select no page")))
       return
     }
-    let (printInfo, defaults) = buildPrintInfo(options: options)
     // A single range goes to the panel's "Range from … to …" over the whole
     // document, where the user can see and edit it. The panel can't express a
-    // discontinuous selection, so for those the view holds only the pages.
-    var viewPages = pages
-    if options?.pageRanges?.count == 1, let first = pages.first, let last = pages.last {
+    // discontinuous selection, so for those the view prints only the pages.
+    if ranges.count == 1 {
+      view.pageRanges = []
       let attrs = printInfo.dictionary()
       attrs[NSPrintInfo.AttributeKey.allPages] = false
       attrs[NSPrintInfo.AttributeKey.firstPage] = first + 1
       attrs[NSPrintInfo.AttributeKey.lastPage] = last + 1
-      viewPages = Array(0..<pageCount)
     }
     // Settings the options changed from the printer defaults.
     let requested = printInfo.printSettings.filter { key, value in
       !(defaults[key].map { ($0 as AnyObject).isEqual(value) } ?? false)
     }
-    // The view re-reads paper and margins when paginating (see PaperPrintView).
-    let view = makeView(viewPages, printInfo.paperSize)
     DispatchQueue.main.async {
       let op = NSPrintOperation(view: view, printInfo: printInfo)
       op.showsPrintPanel = showPanel
@@ -310,84 +314,6 @@ extension FlutterPrintPlugin {
         }
       }
     }
-  }
-
-  /// Outcome of attempting a silent `lp` print job.
-  private enum LpResult {
-    /// `lp` could not be spawned at all (e.g. the app is sandboxed).
-    case launchFailed
-    /// `lp` ran to completion with the given exit status (0 == success).
-    case completed(Int32)
-  }
-
-  private func printViaLp(url: URL, options: PrintOptions?,
-                          completion: @escaping (LpResult) -> Void) {
-    var args: [String] = []
-    if let addr = options?.printerAddress, !addr.isEmpty {
-      args += ["-d", addr]
-    }
-    if let copies = options?.copies, copies > 1 {
-      args += ["-n", "\(copies)"]
-    }
-    if options?.landscape == true {
-      args += ["-o", "orientation-requested=4"]
-    }
-    if options?.color == false {
-      args += ["-o", "print-color-mode=monochrome"]
-    }
-    if let duplex = options?.duplexMode {
-      let sides = switch duplex {
-      case .none:      "one-sided"
-      case .longEdge:  "two-sided-long-edge"
-      case .shortEdge: "two-sided-short-edge"
-      }
-      args += ["-o", "sides=\(sides)"]
-    }
-    if let pageRanges = cupsPageRanges(options?.pageRanges) {
-      args += ["-o", "page-ranges=\(pageRanges)"]
-    }
-    if let ps = options?.pageSize {
-      if !ps.name.isEmpty {
-        // Most CUPS drivers accept the well-known name directly (e.g. "A4").
-        args += ["-o", "media=\(ps.name)"]
-      } else if let w = ps.width, let h = ps.height {
-        args += ["-o", "media=Custom.\(Int(w * mmToPts))x\(Int(h * mmToPts))"]
-      }
-    }
-    if let m = options?.margins {
-      // Best-effort: honored by CUPS' built-in filters, ignored by drivers
-      // that manage their own imageable area.
-      args += ["-o", "page-top=\(Int(m.top * mmToPts))"]
-      args += ["-o", "page-bottom=\(Int(m.bottom * mmToPts))"]
-      args += ["-o", "page-left=\(Int(m.left * mmToPts))"]
-      args += ["-o", "page-right=\(Int(m.right * mmToPts))"]
-    }
-    args.append(url.path)
-
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/lp")
-    process.arguments = args
-
-    // Run lp off the platform thread and wait for it, so the actual print
-    // outcome (not merely whether the process spawned) is reported back.
-    DispatchQueue.global(qos: .userInitiated).async {
-      do {
-        try process.run()
-      } catch {
-        completion(.launchFailed)
-        return
-      }
-      process.waitUntilExit()
-      completion(.completed(process.terminationStatus))
-    }
-  }
-
-  /// Formats [ranges] as a CUPS `page-ranges` value (e.g. `"2-6,9,15"`).
-  /// Returns nil when the selection is unset or empty (print all pages).
-  private func cupsPageRanges(_ ranges: [PageRange]?) -> String? {
-    guard let ranges, !ranges.isEmpty else { return nil }
-    return ranges.map { $0.start == $0.end ? "\($0.start)" : "\($0.start)-\($0.end)" }
-      .joined(separator: ",")
   }
 }
 

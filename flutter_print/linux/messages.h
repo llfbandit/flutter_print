@@ -437,8 +437,8 @@ FlutterPrintDuplexMode* flutter_print_print_options_get_duplex_mode(FlutterPrint
  * with `INVALID_PAGE_RANGE` (Windows, macOS).
  *
  * Platform support: Windows (PDF, image, and text files — the range is
- * applied while rendering), macOS (PDF and image files), and Linux (via the
- * CUPS `page-ranges` option).
+ * applied while rendering), macOS (PDF, image, and text document files),
+ * and Linux (via the CUPS `page-ranges` option).
  *
  * Ignored on Android, iOS, and Web, where page selection is controlled by
  * the system print dialog, and for delegated/unknown file types on every

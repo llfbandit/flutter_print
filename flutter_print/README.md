@@ -2,12 +2,11 @@
 
 A Flutter plugin focusing on print, that's it.
 
-**PDF and image files** are rendered natively on every platform.
+**PDF and image files** print on every platform, with the print options
+applied. Text documents are rendered natively on macOS and Windows. Other file
+types are handled differently on each platform, see [File types](#file-types).
 
-**All other file types** (HTML, plain text, Office documents, …) are forwarded to the platform's default handler for that format.
-`PrintOptions` fields other than `printerAddress` may not be forwarded in this case.
-
-**Widgets** are rendered as image in a (single page) pdf.
+**Widgets** are rendered as an image in a single-page PDF.
 
 ---
 
@@ -24,9 +23,12 @@ final List<PrinterInfo> printers = await FlutterPrint.listPrinters();
 // Print with default settings
 await FlutterPrint.print('/path/to/document.pdf');
 
-// On the web `filePath` must be a URL accessible from the page's origin.
-// The browser's native print dialog (which includes a preview) is always shown.
-// Blob URL is OK too.
+// Let the user review settings in the system print dialog first
+await FlutterPrint.printPreview('/path/to/document.pdf', context: context);
+
+// On the web `filePath` must be a URL accessible from the page's origin, or a
+// Blob URL. The browser's print dialog (which includes a preview) is always
+// shown.
 await FlutterPrint.print('https://example.com/document.pdf');
 ```
 
@@ -37,10 +39,10 @@ await FlutterPrint.print(
   '/path/to/document.pdf',
   options: PrintOptions(
     // Target a specific printer (uses system default when omitted).
-    printerAddress: 'my_printer',
+    printerAddress: printers.first.address,
 
     // Use a named page size preset.
-    // Or via PageSize(width: w, height: h)
+    // Or via PageSize(name: '', width: w, height: h)
     pageSize: PaperSizes.a4,
 
     // Margins in millimetres.
@@ -49,16 +51,25 @@ await FlutterPrint.print(
     copies: 2,
     landscape: false,
     color: true,
+    duplexMode: DuplexMode.longEdge,
+
+    // Pages 1–3 and 5.
+    pageRanges: [PageRange(start: 1, end: 3), PageRange(start: 5, end: 5)],
   ),
 );
 ```
+
+Page ranges are 1-based and inclusive. They are sorted and merged before
+printing; an invalid range throws an `ArgumentError`, and a selection that
+matches no page fails with `INVALID_PAGE_RANGE`.
 
 ### Widget print
 
 Render any Flutter widget off-screen and print it directly — no file needed.
 `printWidget` rasterises the widget into a single-page PDF and sends it to the
-printer. `previewWidget` does the same but returns PNG bytes you can display
-with `Image.memory` before printing.
+printer, and `printWidgetPreview` opens it in the print dialog instead.
+`previewWidget` returns PNG bytes you can display with `Image.memory` before
+printing.
 
 ```dart
 // Print a widget
@@ -83,55 +94,71 @@ Image.memory(png);
 
 | Feature        | Android | iOS | macOS | Windows | Linux | Web |
 |----------------|---------|-----|-------|---------|-------|-----|
-| Direct print   |         | ✔️† | ✔️   | ✔️      | ✔️   |     |
-| Setup & print  | ✔️      | ✔️ | ✔️   | ✔️      | ✔️§  | ✔️  |
-| List printers  |         |     | ✔️   | ✔️      | ✔️   |     |
+| Direct print   |         | ✔️¹ | ✔️    | ✔️      | ✔️    |     |
+| Print preview  | ✔️      | ✔️  | ✔️    | ✔️²     | ✔️³   | ✔️  |
+| List printers  |         |     | ✔️    | ✔️      | ✔️    |     |
 
-† On iOS, with a `printerAddress` from `FlutterPrint.ios?.pickPrinter()` (e.g. `ipp://printer.local./ipp/print`),
-
-§ On Linux it uses `xdg-open` to open the file in its default viewer.
+¹ With a `printerAddress` from `FlutterPrint.ios?.pickPrinter()` (e.g.
+`ipp://printer.local./ipp/print`). Without it, the system print dialog is shown.  
+² A Flutter print dialog with a built-in preview.  
+³ Opens the file in its default viewer with `xdg-open`.
 
 ## Option support by platform
 
-Not all options are honoured on every platform. Unsupported fields are silently
-ignored.
+Options a platform doesn't support are silently ignored.
 
 | Option           | Android | iOS | macOS | Windows | Linux | Web |
 |------------------|---------|-----|-------|---------|-------|-----|
-| `printerAddress` |         | ✔️† | ✔️   | ✔️      | ✔️   |     |
-| `pageSize`       | ✔️      |     | ✔️   | ✔️‡     | ✔️§  |     |
-| `margins`        | ✔️      |     | ✔️   |         | ✔️§  |     |
-| `copies`         |         |     | ✔️   | ✔️‡     | ✔️   |     |
-| `landscape`      | ✔️      | ✔️  | ✔️   | ✔️‡    | ✔️   |    |
-| `color`          | ✔️      | ✔️  | ✔️¶  | ✔️‡    | ✔️   |    |
-| `duplexMode`     | ✔️      | ✔️  | ✔️   | ✔️‡    | ✔️§  |    |
+| `printerAddress` |         | ✔️¹ | ✔️    | ✔️      | ✔️    |     |
+| `pageSize`       | ✔️⁵     |     | ✔️    | ✔️²     | ✔️³   |     |
+| `margins`        | ✔️⁵     |     | ✔️    |         |       |     |
+| `copies`         |         |     | ✔️    | ✔️²     | ✔️    |     |
+| `landscape`      | ✔️      | ✔️  | ✔️    | ✔️²     | ✔️    |     |
+| `color`          | ✔️      | ✔️  | ✔️⁴   | ✔️²     | ✔️    |     |
+| `duplexMode`     | ✔️⁵     | ✔️  | ✔️    | ✔️²     | ✔️    |     |
+| `pageRanges`     |         |     | ✔️    | ✔️²     | ✔️    |     |
 
-† On iOS, with a `printerAddress` from `FlutterPrint.ios?.pickPrinter()` (e.g. `ipp://printer.local./ipp/print`).
+¹ With a `printerAddress` from `FlutterPrint.ios?.pickPrinter()`.  
+² For PDF, image and text files only.  
+³ Requires the CUPS development libraries at build time (see [Linux](#linux)).  
+⁴ The print panel shows the requested `color` when the printer driver has
+colour presets (AirPrint and most drivers).  
+⁵ For PDF files only.
 
-‡ Windows — options are fully applied for **PDF** files and **image** files.
-All other file types are delegated to their associated application with its own defaults.  
+On macOS, the options are applied to the print panel too, so the user starts
+from the requested settings.
 
-§ Linux — requires CUPS.  
+## File types
 
-¶ macOS — the print panel shows the requested `color` when the printer driver has colour presets (AirPrint and most drivers). 
+| Platform | PDF & images | Text documents | Other files |
+|----------|--------------|----------------|-------------|
+| Android  | Native       | Not supported  | Not supported |
+| iOS      | Native       | `UNSUPPORTED_FILE` | `UNSUPPORTED_FILE` |
+| macOS    | Native       | Native¹        | `print` fails with `UNSUPPORTED_FILE`; `printPreview` opens the default app |
+| Windows  | Native       | Native²        | Printed by the associated application, with its own settings |
+| Linux    | CUPS         | CUPS           | CUPS |
+| Web      | Browser      | Browser        | Browser |
 
----
+¹ Plain text, RTF, HTML, Word and OpenDocument text (macOS 11+).  
+² Any `text/*` file, printed as plain text.
 
 ## Image support by platform
 
-| Format | Windows | macOS | iOS | Android | Linux |
-|--------|---------|-------|-----|---------|-------|
-| JPEG   | ✔️      | ✔️   | ✔️  | ✔️     | ✔️    |
-| PNG    | ✔️      | ✔️   | ✔️  | ✔️     | ✔️    |
-| BMP    | ✔️      | ✔️   | ✔️  | ✔️     | ✔️    |
-| GIF    | ✔️      | ✔️   | ✔️  | ✔️     | ✔️    |
-| TIFF   | ✔️      | ✔️   | ✔️  | ✔️     | ✔️    |
-| WebP   | ✔️¹     | ✔️²  | ✔️² | ✔️     | ✔️³   |
-| HEIC   | ✔️¹     | ✔️²  | ✔️² | ✔️     | ✔️³   |
+| Format | Android | iOS | macOS | Windows | Linux |
+|--------|---------|-----|-------|---------|-------|
+| JPEG   | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    |
+| PNG    | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    |
+| BMP    | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    |
+| GIF    | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    |
+| TIFF   | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    |
+| WebP   | ✔️      | ✔️¹ | ✔️¹   | ✔️²     | ✔️³   |
+| HEIC   | ✔️      | ✔️  | ✔️    | ✔️²     | ✔️³   |
 
-¹ Requires the WebP or HEIC codec from the Microsoft Store (built into Windows 11 for HEIC).  
-² Requires macOS / iOS 11 or later.  
-³ Requires the matching GDK-Pixbuf loader: `webp-pixbuf-loader` for WebP, `libheif` + `heif-pixbuf-loader` for HEIC.
+¹ Requires iOS 14 / macOS 11 or later.  
+² Requires the WebP or HEIC codec from the Microsoft Store (built into
+Windows 11 for HEIC).  
+³ Requires the matching GDK-Pixbuf loader: `webp-pixbuf-loader` for WebP,
+`libheif` + `heif-pixbuf-loader` for HEIC.
 
 ---
 
@@ -139,21 +166,15 @@ All other file types are delegated to their associated application with its own 
 
 ### macOS
 
-You must add print entitlement to your app:
+Add the print entitlement to `macos/Runner/Release.entitlements` and
+`macos/Runner/DebugProfile.entitlements`:
 
-`macos/Runner/Release.entitlements` and `macos/Runner/DebugProfile.entitlements`
 ```xml
-<dict>
-  <key>com.apple.security.print</key>
-  <true/>
-</dict>
+<key>com.apple.security.print</key>
+<true/>
 ```
 
-PDF and image files are rendered and printed natively (honouring the print
-options). Any other file type is printed silently through the `lp`
-command-line tool — but a **sandboxed** app cannot spawn `lp`, so in that case
-the file is opened in its default application instead. Disable the App Sandbox
-if you need silent printing of non‑PDF/image files.
+The plugin works in sandboxed apps and needs no other entitlement.
 
 ### Linux
 
@@ -171,6 +192,6 @@ sudo dnf install cups-devel
 sudo pacman -S cups
 ```
 
-When `libcups2-dev` is absent the plugin still compiles, but `listPrinters`
-returns an empty list and `print` falls back to the `lp` command-line tool
-(which requires CUPS to be running at runtime).
+Without them the plugin still compiles, but `listPrinters` returns an empty
+list and `print` falls back to the `lp` command-line tool (which requires CUPS
+to be running), without `pageSize` support.

@@ -13,11 +13,30 @@ private func aspectFit(_ size: NSSize, in rect: NSRect) -> NSRect {
 /// print panel (paper size, orientation) apply to the preview and the output.
 class PaperPrintView: NSView {
   /// Area within the sheet content is scaled into (paper size minus the
-  /// requested margins), in the view's coordinate system.
+  /// requested margins), in unflipped view coordinates.
   private(set) var contentRect: NSRect
 
-  /// Number of sheets the view prints.
-  var pageCount: Int { 1 }
+  /// 1-based page ranges to print; empty prints every page. Kept as ranges
+  /// rather than indices so they still apply after re-pagination.
+  var pageRanges: [ClosedRange<Int>] = []
+
+  /// Document page drawn by the next draw(_:).
+  private(set) var currentPage = 0
+
+  /// Number of pages in the document at the current layout.
+  var documentPageCount: Int { 1 }
+
+  /// 0-based document pages to print, in output order. Lets the job skip
+  /// pages (discontinuous selections like 2–6,9,15) while NSView still sees a
+  /// contiguous 1..n range.
+  var pages: [Int] {
+    let all = 0..<documentPageCount
+    if pageRanges.isEmpty { return Array(all) }
+    return all.filter { i in pageRanges.contains { $0.contains(i + 1) } }
+  }
+
+  /// [pages] as of the last pagination, used while printing each page.
+  private var printedPages: [Int] = []
 
   init(paperSize: NSSize) {
     contentRect = NSRect(origin: .zero, size: paperSize)
@@ -26,21 +45,29 @@ class PaperPrintView: NSView {
 
   required init?(coder: NSCoder) { fatalError() }
 
+  /// Adopts [info]'s paper and margins. Subclasses re-paginate here.
+  func layOut(for info: NSPrintInfo) {
+    let paper = info.paperSize
+    setFrameSize(paper)
+    contentRect = NSRect(
+      x: info.leftMargin,
+      y: info.bottomMargin,
+      width:  max(0, paper.width  - info.leftMargin - info.rightMargin),
+      height: max(0, paper.height - info.topMargin  - info.bottomMargin))
+  }
+
   override func knowsPageRange(_ range: NSRangePointer) -> Bool {
-    if let info = NSPrintOperation.current?.printInfo {
-      let paper = info.paperSize
-      setFrameSize(paper)
-      contentRect = NSRect(
-        x: info.leftMargin,
-        y: info.bottomMargin,
-        width:  max(0, paper.width  - info.leftMargin - info.rightMargin),
-        height: max(0, paper.height - info.topMargin  - info.bottomMargin))
-    }
-    range.pointee = NSMakeRange(1, pageCount)
+    if let info = NSPrintOperation.current?.printInfo { layOut(for: info) }
+    printedPages = pages
+    range.pointee = NSMakeRange(1, printedPages.count)
     return true
   }
 
-  override func rectForPage(_ page: Int) -> NSRect { bounds }
+  override func rectForPage(_ page: Int) -> NSRect {
+    // `page` is the 1-based output position; map it to the document page.
+    currentPage = printedPages[page - 1]
+    return bounds
+  }
 }
 
 class ImagePrintView: PaperPrintView {
@@ -62,27 +89,15 @@ class ImagePrintView: PaperPrintView {
 
 class PDFPagePrintView: PaperPrintView {
   let document: PDFDocument
-  /// 0-based indices of the document pages to print, in output order. Lets the
-  /// print job skip pages (and support discontinuous selections like 2–6,9,15)
-  /// while NSView still sees a contiguous 1..pages.count range.
-  private let pages: [Int]
-  private var currentPage = 0
 
-  init(document: PDFDocument, pages: [Int], paperSize: NSSize) {
+  init(document: PDFDocument, paperSize: NSSize) {
     self.document = document
-    self.pages = pages
     super.init(paperSize: paperSize)
   }
 
   required init?(coder: NSCoder) { fatalError() }
 
-  override var pageCount: Int { pages.count }
-
-  override func rectForPage(_ page: Int) -> NSRect {
-    // `page` is the 1-based output position; map it to the document page index.
-    currentPage = pages[page - 1]
-    return super.rectForPage(page)
-  }
+  override var documentPageCount: Int { document.pageCount }
 
   override func draw(_ dirtyRect: NSRect) {
     guard let ctx = NSGraphicsContext.current?.cgContext,
@@ -100,5 +115,78 @@ class PDFPagePrintView: PaperPrintView {
     ctx.drawPDFPage(cgPage)
 
     ctx.restoreGState()
+  }
+}
+
+/// Paginates styled text (plain text, RTF, HTML, Word…) onto the sheets.
+class DocumentPrintView: PaperPrintView {
+  private let storage: NSTextStorage
+  private let layoutManager = NSLayoutManager()
+  /// Area text flows into on each sheet, in flipped view coordinates.
+  private var textRect = NSRect.zero
+
+  init(text: NSAttributedString, paperSize: NSSize) {
+    storage = NSTextStorage(attributedString: text)
+    super.init(paperSize: paperSize)
+    storage.addLayoutManager(layoutManager)
+  }
+
+  required init?(coder: NSCoder) { fatalError() }
+
+  // Text lays out top-down.
+  override var isFlipped: Bool { true }
+
+  override var documentPageCount: Int { max(1, layoutManager.textContainers.count) }
+
+  override func layOut(for info: NSPrintInfo) {
+    super.layOut(for: info)
+    // Keep text inside the printer's printable area, even with zero margins.
+    let r = contentRect.intersection(info.imageablePageBounds)
+    textRect = NSRect(x: r.minX, y: bounds.height - r.maxY, width: r.width, height: r.height)
+    fitAttachments()
+
+    while !layoutManager.textContainers.isEmpty {
+      layoutManager.removeTextContainer(at: 0)
+    }
+    // One text container per sheet, until all glyphs are placed.
+    repeat {
+      let container = NSTextContainer(size: textRect.size)
+      layoutManager.addTextContainer(container)
+      let range = layoutManager.glyphRange(for: container)
+      if range.length == 0 || NSMaxRange(range) >= layoutManager.numberOfGlyphs { break }
+    } while true
+  }
+
+  /// Scales images larger than the text area down to fit, so they aren't cut
+  /// off at the bottom of the sheet.
+  private func fitAttachments() {
+    // Text containers inset each line by their padding on both sides.
+    let padding = NSTextContainer().lineFragmentPadding
+    let width = textRect.width - 2 * padding, height = textRect.height
+    storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) {
+      value, range, _ in
+      guard let attachment = value as? NSTextAttachment else { return }
+      // Cell-based attachments (from HTML/RTFD imports) ignore `bounds`; lay
+      // their image out directly instead.
+      if attachment.image == nil,
+         let image = (attachment.attachmentCell as? NSTextAttachmentCell)?.image {
+        attachment.image = image
+        attachment.attachmentCell = nil
+      }
+      guard let natural = attachment.image?.size, natural.width > 0, natural.height > 0
+      else { return }
+      let scale = max(0, min(1, width / natural.width, height / natural.height))
+      attachment.bounds = NSRect(x: 0, y: 0,
+                                 width: natural.width * scale, height: natural.height * scale)
+      layoutManager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+    }
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    let containers = layoutManager.textContainers
+    guard currentPage < containers.count else { return }
+    let range = layoutManager.glyphRange(for: containers[currentPage])
+    layoutManager.drawBackground(forGlyphRange: range, at: textRect.origin)
+    layoutManager.drawGlyphs(forGlyphRange: range, at: textRect.origin)
   }
 }

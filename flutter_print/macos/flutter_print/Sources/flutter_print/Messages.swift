@@ -424,8 +424,8 @@ struct PrintOptions: Hashable, CustomStringConvertible {
   /// with `INVALID_PAGE_RANGE` (Windows, macOS).
   ///
   /// Platform support: Windows (PDF, image, and text files — the range is
-  /// applied while rendering), macOS (PDF and image files), and Linux (via the
-  /// CUPS `page-ranges` option).
+  /// applied while rendering), macOS (PDF, image, and text document files),
+  /// and Linux (via the CUPS `page-ranges` option).
   ///
   /// Ignored on Android, iOS, and Web, where page selection is controlled by
   /// the system print dialog, and for delegated/unknown file types on every
@@ -730,9 +730,9 @@ protocol FlutterPrintApi {
   /// a preview step). The [PrintOptions.printerAddress] field is ignored on
   /// Android; on iOS it must be a full AirPrint URL to bypass the dialog.
   ///
-  /// **macOS** — For PDF files the job is rendered
-  /// page-by-page using PDFKit. Other file types are opened with the default
-  /// application instead.
+  /// **macOS** — PDF, image and text document files (plain text, RTF, HTML,
+  /// Word, OpenDocument; macOS 11+) are rendered natively with the options
+  /// applied. Other file types fail with `UNSUPPORTED_FILE`.
   ///
   /// **Windows** — PDF, image, and text files are rendered directly to the
   /// printer. Other file types are delegated; the
@@ -750,7 +750,8 @@ protocol FlutterPrintApi {
   /// includes a preview step on these platforms.
   ///
   /// **macOS** — opens the system print dialog so the user can review and
-  /// adjust settings before printing.
+  /// adjust settings before printing. File types [print] does not support are
+  /// opened in their default application instead.
   ///
   /// **Windows** — opens a custom Flutter print dialog with a built-in
   /// preview for PDF, image, and text files.
@@ -789,9 +790,9 @@ class FlutterPrintApiSetup {
     /// a preview step). The [PrintOptions.printerAddress] field is ignored on
     /// Android; on iOS it must be a full AirPrint URL to bypass the dialog.
     ///
-    /// **macOS** — For PDF files the job is rendered
-    /// page-by-page using PDFKit. Other file types are opened with the default
-    /// application instead.
+    /// **macOS** — PDF, image and text document files (plain text, RTF, HTML,
+    /// Word, OpenDocument; macOS 11+) are rendered natively with the options
+    /// applied. Other file types fail with `UNSUPPORTED_FILE`.
     ///
     /// **Windows** — PDF, image, and text files are rendered directly to the
     /// printer. Other file types are delegated; the
@@ -826,7 +827,8 @@ class FlutterPrintApiSetup {
     /// includes a preview step on these platforms.
     ///
     /// **macOS** — opens the system print dialog so the user can review and
-    /// adjust settings before printing.
+    /// adjust settings before printing. File types [print] does not support are
+    /// opened in their default application instead.
     ///
     /// **Windows** — opens a custom Flutter print dialog with a built-in
     /// preview for PDF, image, and text files.
