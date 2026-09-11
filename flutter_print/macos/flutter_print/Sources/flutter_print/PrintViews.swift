@@ -101,18 +101,20 @@ class PDFPagePrintView: PaperPrintView {
 
   override func draw(_ dirtyRect: NSRect) {
     guard let ctx = NSGraphicsContext.current?.cgContext,
-          let page = document.page(at: currentPage),
-          let cgPage = page.pageRef else { return }
+          let page = document.page(at: currentPage) else { return }
 
-    let pageRect = page.bounds(for: .cropBox)
-    let fit = aspectFit(pageRect.size, in: contentRect)
+    // Size as displayed: the crop box, turned by the page's rotation.
+    let box = page.bounds(for: .cropBox)
+    let size = page.rotation % 180 == 0 ? box.size : NSSize(width: box.height, height: box.width)
+    let fit = aspectFit(size, in: contentRect)
 
     ctx.saveGState()
 
-    let s = fit.width / pageRect.width
+    let s = fit.width / size.width
     ctx.translateBy(x: fit.minX, y: fit.minY)
     ctx.scaleBy(x: s, y: s)
-    ctx.drawPDFPage(cgPage)
+    // Applies the crop box origin and the page rotation.
+    page.draw(with: .cropBox, to: ctx)
 
     ctx.restoreGState()
   }
