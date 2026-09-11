@@ -5,6 +5,7 @@
 * feat(macos): Print text, RTF, HTML and Word documents natively, with all options. Drop the `lp` fallback (App Sandbox); `print` fails with `UNSUPPORTED_FILE` for other file types.
 * fix(macos): Don't crash on a negative or out-of-range `copies`.
 * fix(macos): Print rotated and cropped PDF pages as displayed.
+* fix(macos): Fail with `PRINTER_ERROR` for an unknown `printerAddress` instead of using the default printer.
 
 ## 0.4.0
 * feat: Make print options nullable to get system defaults.

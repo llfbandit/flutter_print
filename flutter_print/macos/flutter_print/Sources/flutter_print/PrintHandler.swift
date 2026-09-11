@@ -246,6 +246,12 @@ extension FlutterPrintPlugin {
     completion: @escaping (Result<Void, Error>) -> Void,
     makeView: (NSSize) -> PaperPrintView
   ) {
+    // An unknown printer would silently fall back to the default one.
+    if let name = options?.printerAddress, !name.isEmpty, NSPrinter(name: name) == nil {
+      completion(.failure(PigeonError(code: "PRINTER_ERROR",
+                                      message: "Printer not found: \(name)")))
+      return
+    }
     let (printInfo, defaults) = buildPrintInfo(options: options)
     // Paginate now: a text document's page count depends on paper and margins.
     // The view paginates again when printing (see PaperPrintView).
