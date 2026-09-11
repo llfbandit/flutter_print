@@ -3,6 +3,7 @@
 * feat: Sort and merge page ranges. Throw ArgumentError on invalid ranges.
 * fix(macos): Apply all print options in the print panel and follow paper changes made there.
 * feat(macos): Print text, RTF, HTML and Word documents natively, with all options. Drop the `lp` fallback (App Sandbox); `print` fails with `UNSUPPORTED_FILE` for other file types.
+* fix(macos): Don't crash on a negative or out-of-range `copies`.
 
 ## 0.4.0
 * feat: Make print options nullable to get system defaults.

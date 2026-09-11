@@ -186,7 +186,8 @@ extension FlutterPrintPlugin {
     info.rightMargin  = (m?.right  ?? 0) * mmToPts
 
     if let copies = options?.copies {
-      PMSetCopies(OpaquePointer(info.pmPrintSettings()), UInt32(copies), false)
+      // Clamp: converting a negative or huge value would trap.
+      PMSetCopies(OpaquePointer(info.pmPrintSettings()), UInt32(clamping: max(1, copies)), false)
       info.updateFromPMPrintSettings()
     }
 
