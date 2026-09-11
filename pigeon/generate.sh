@@ -7,7 +7,7 @@ echo "Generating Pigeon messages..."
 dart run pigeon --input pigeon/messages.dart
 
 echo "Copying Messages.swift to macOS..."
-cp ios/flutter_print/Sources/flutter_print/Messages.swift \
-   macos/flutter_print/Sources/flutter_print/Messages.swift
+cp flutter_print/ios/flutter_print/Sources/flutter_print/Messages.swift \
+   flutter_print/macos/flutter_print/Sources/flutter_print/Messages.swift
 
 echo "Done."
