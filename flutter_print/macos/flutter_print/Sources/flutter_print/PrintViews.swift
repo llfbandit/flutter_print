@@ -47,9 +47,14 @@ class PaperPrintView: NSView {
 
   /// Adopts [info]'s paper and margins. Subclasses re-paginate here.
   func layOut(for info: NSPrintInfo) {
+    setFrameSize(info.paperSize)
+    contentRect = Self.contentRect(for: info)
+  }
+
+  /// The paper size minus [info]'s margins.
+  static func contentRect(for info: NSPrintInfo) -> NSRect {
     let paper = info.paperSize
-    setFrameSize(paper)
-    contentRect = NSRect(
+    return NSRect(
       x: info.leftMargin,
       y: info.bottomMargin,
       width:  max(0, paper.width  - info.leftMargin - info.rightMargin),
@@ -120,17 +125,13 @@ class PDFPagePrintView: PaperPrintView {
   }
 }
 
-/// Paginates styled text (plain text, RTF, HTML, Word…) onto the sheets.
+/// Prints styled text (plain text, RTF, HTML, Word…) paginated by [TextPages].
 class DocumentPrintView: PaperPrintView {
-  private let storage: NSTextStorage
-  private let layoutManager = NSLayoutManager()
-  /// Area text flows into on each sheet, in flipped view coordinates.
-  private var textRect = NSRect.zero
+  private let text: TextPages
 
-  init(text: NSAttributedString, paperSize: NSSize) {
-    storage = NSTextStorage(attributedString: text)
+  init(text: TextPages, paperSize: NSSize) {
+    self.text = text
     super.init(paperSize: paperSize)
-    storage.addLayoutManager(layoutManager)
   }
 
   required init?(coder: NSCoder) { fatalError() }
@@ -138,40 +139,103 @@ class DocumentPrintView: PaperPrintView {
   // Text lays out top-down.
   override var isFlipped: Bool { true }
 
-  override var documentPageCount: Int { max(1, layoutManager.textContainers.count) }
+  override var documentPageCount: Int { text.pageCount }
 
   override func layOut(for info: NSPrintInfo) {
     super.layOut(for: info)
-    // Keep text inside the printer's printable area, even with zero margins.
-    let r = contentRect.intersection(info.imageablePageBounds)
-    textRect = NSRect(x: r.minX, y: bounds.height - r.maxY, width: r.width, height: r.height)
-    fitAttachments()
+    text.layOut(in: Self.textRect(for: info))
+  }
 
-    while !layoutManager.textContainers.isEmpty {
-      layoutManager.removeTextContainer(at: 0)
+  /// Area text flows into on each sheet, in flipped view coordinates. Kept
+  /// inside the printer's printable area, even with zero margins.
+  static func textRect(for info: NSPrintInfo) -> NSRect {
+    let r = contentRect(for: info).intersection(info.imageablePageBounds)
+    return NSRect(x: r.minX, y: info.paperSize.height - r.maxY, width: r.width, height: r.height)
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    text.draw(page: currentPage)
+  }
+}
+
+/// Splits styled text into pages of a text area. Not a view, so it can
+/// paginate off the main thread.
+final class TextPages: NSObject, NSLayoutManagerDelegate {
+  private let storage: NSTextStorage
+  private let layoutManager = NSLayoutManager()
+  // A single container: each added container slows down the layout of all.
+  private let container = NSTextContainer()
+  private var textRect = NSRect.zero
+  /// Glyphs of each page, and the page's top in the container.
+  private var pages: [(glyphs: NSRange, top: CGFloat)] = []
+
+  init(text: NSAttributedString) {
+    storage = NSTextStorage(attributedString: text)
+    super.init()
+    layoutManager.delegate = self
+    layoutManager.addTextContainer(container)
+    storage.addLayoutManager(layoutManager)
+  }
+
+  var pageCount: Int { max(1, pages.count) }
+
+  /// Paginates the text into [rect]-sized pages, unless already done.
+  func layOut(in rect: NSRect) {
+    guard rect != textRect else { return }
+    textRect = rect
+    fitAttachments()
+    container.size = NSSize(width: rect.width, height: .greatestFiniteMagnitude)
+
+    // Break between lines: before a line that would overflow the page, and
+    // after a page break.
+    let text = storage.string as NSString
+    let all = NSRange(location: 0, length: layoutManager.numberOfGlyphs)
+    var start = 0, top: CGFloat = 0, pageBreak = false
+    pages = []
+    layoutManager.enumerateLineFragments(forGlyphRange: all) { line, _, _, glyphs, _ in
+      if glyphs.location > start, pageBreak || line.maxY - top > rect.height {
+        self.pages.append((NSRange(start..<glyphs.location), top))
+        start = glyphs.location
+        top = line.minY
+      }
+      let chars = self.layoutManager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+      pageBreak = chars.length > 0 && text.character(at: NSMaxRange(chars) - 1) == 0x0C
     }
-    // One text container per sheet, until all glyphs are placed.
-    repeat {
-      let container = NSTextContainer(size: textRect.size)
-      layoutManager.addTextContainer(container)
-      let range = layoutManager.glyphRange(for: container)
-      if range.length == 0 || NSMaxRange(range) >= layoutManager.numberOfGlyphs { break }
-    } while true
+    pages.append((NSRange(start..<all.length), top))
+  }
+
+  /// Draws [page] into its text area.
+  func draw(page: Int) {
+    guard page < pages.count else { return }
+    let (glyphs, top) = pages[page]
+    let origin = NSPoint(x: textRect.minX, y: textRect.minY - top)
+    layoutManager.drawBackground(forGlyphRange: glyphs, at: origin)
+    layoutManager.drawGlyphs(forGlyphRange: glyphs, at: origin)
+  }
+
+  // The single container can't honour page breaks (form feeds); lay them out
+  // as line breaks and break the page in layOut(in:).
+  func layoutManager(_ layoutManager: NSLayoutManager,
+                     shouldUse action: NSLayoutManager.ControlCharacterAction,
+                     forControlCharacterAt charIndex: Int) -> NSLayoutManager.ControlCharacterAction {
+    action == .containerBreak ? .lineBreak : action
   }
 
   /// Scales images larger than the text area down to fit, so they aren't cut
   /// off at the bottom of the sheet.
   private func fitAttachments() {
     // Text containers inset each line by their padding on both sides.
-    let padding = NSTextContainer().lineFragmentPadding
-    let width = textRect.width - 2 * padding, height = textRect.height
+    let width = textRect.width - 2 * container.lineFragmentPadding
+    let height = textRect.height
     storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) {
       value, range, _ in
       guard let attachment = value as? NSTextAttachment else { return }
       // Cell-based attachments (from HTML/RTFD imports) ignore `bounds`; lay
-      // their image out directly instead.
+      // their image out directly instead. Decoded from the file, as the cell
+      // is main-thread only.
       if attachment.image == nil,
-         let image = (attachment.attachmentCell as? NSTextAttachmentCell)?.image {
+         let data = attachment.fileWrapper?.regularFileContents,
+         let image = NSImage(data: data) {
         attachment.image = image
         attachment.attachmentCell = nil
       }
@@ -182,13 +246,5 @@ class DocumentPrintView: PaperPrintView {
                                  width: natural.width * scale, height: natural.height * scale)
       layoutManager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
     }
-  }
-
-  override func draw(_ dirtyRect: NSRect) {
-    let containers = layoutManager.textContainers
-    guard currentPage < containers.count else { return }
-    let range = layoutManager.glyphRange(for: containers[currentPage])
-    layoutManager.drawBackground(forGlyphRange: range, at: textRect.origin)
-    layoutManager.drawGlyphs(forGlyphRange: range, at: textRect.origin)
   }
 }

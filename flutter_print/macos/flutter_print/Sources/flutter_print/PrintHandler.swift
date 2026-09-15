@@ -48,36 +48,59 @@ extension FlutterPrintPlugin {
                                       message: "File not found: \(filePath)")))
       return
     }
+    // An unknown printer would silently fall back to the default one.
+    if let name = options?.printerAddress, !name.isEmpty, NSPrinter(name: name) == nil {
+      completion(.failure(PigeonError(code: "PRINTER_ERROR",
+                                      message: "Printer not found: \(name)")))
+      return
+    }
 
     let fileURL = URL(fileURLWithPath: filePath)
-    let ext = fileURL.pathExtension.lowercased()
-
-    if ext == "pdf" {
-      guard let doc = PDFDocument(url: fileURL) else {
-        completion(.failure(PigeonError(code: "INVALID_FILE",
-                                        message: "Cannot open PDF")))
-        return
+    let (printInfo, defaults) = buildPrintInfo(options: options)
+    let textRect = DocumentPrintView.textRect(for: printInfo)
+    // Reading and paginating a large file takes seconds: keep the UI responsive.
+    DispatchQueue.global(qos: .userInitiated).async {
+      let loaded = Result { try self.loadForPrint(fileURL, textRect: textRect) }
+      DispatchQueue.main.async {
+        switch loaded {
+        case .success(let makeView?):
+          self.printRendered(makeView(printInfo.paperSize), printInfo: printInfo,
+                             defaults: defaults, options: options,
+                             showPanel: showPanel, completion: completion)
+        case .success(nil) where showPanel:
+          // No native renderer: let the default app preview and print it.
+          self.openInDefaultApp(fileURL, errorCode: "PREVIEW_ERROR", completion: completion)
+        case .success(nil):
+          // Opening the default app would not print, so fail rather than
+          // report a success.
+          completion(.failure(PigeonError(code: "UNSUPPORTED_FILE",
+                                          message: "File type not supported for printing")))
+        case .failure(let error):
+          completion(.failure(error))
+        }
       }
-      printRendered(options: options, showPanel: showPanel, completion: completion) {
-        PDFPagePrintView(document: doc, paperSize: $0)
-      }
-    } else if let image = NSImage(contentsOf: fileURL) {
-      printRendered(options: options, showPanel: showPanel, completion: completion) {
-        ImagePrintView(image: image, paperSize: $0)
-      }
-    } else if let text = readDocument(fileURL) {
-      printRendered(options: options, showPanel: showPanel, completion: completion) {
-        DocumentPrintView(text: text, paperSize: $0)
-      }
-    } else if showPanel {
-      // No native renderer: let the default app preview and print it.
-      openInDefaultApp(fileURL, errorCode: "PREVIEW_ERROR", completion: completion)
-    } else {
-      // Opening the default app would not print, so fail rather than report
-      // a success.
-      completion(.failure(PigeonError(code: "UNSUPPORTED_FILE",
-                                      message: "File type not supported for printing")))
     }
+  }
+
+  /// Loads [fileURL] and returns a factory for the view that prints it, or nil
+  /// for a file type with no native renderer. Runs off the main thread; text
+  /// is paginated for [textRect] here, so the view doesn't have to.
+  private func loadForPrint(_ fileURL: URL, textRect: NSRect) throws -> ((NSSize) -> PaperPrintView)? {
+    if fileURL.pathExtension.lowercased() == "pdf" {
+      guard let doc = PDFDocument(url: fileURL) else {
+        throw PigeonError(code: "INVALID_FILE", message: "Cannot open PDF")
+      }
+      return { PDFPagePrintView(document: doc, paperSize: $0) }
+    }
+    if let image = NSImage(contentsOf: fileURL) {
+      return { ImagePrintView(image: image, paperSize: $0) }
+    }
+    if let text = readDocument(fileURL) {
+      let pages = TextPages(text: text)
+      pages.layOut(in: textRect)
+      return { DocumentPrintView(text: pages, paperSize: $0) }
+    }
+    return nil
   }
 
   /// Reads any document AppKit can import (plain text, RTF, HTML, Word,
@@ -92,10 +115,17 @@ extension FlutterPrintPlugin {
     // Skip media, archives and other non-documents: AppKit would read them
     // whole as plain text before we could reject them.
     guard isText || type.conforms(to: .compositeContent) else { return nil }
-    var attrs: NSDictionary?
-    guard let text = try? NSAttributedString(url: url, options: [:], documentAttributes: &attrs),
-          let kind = attrs?[NSAttributedString.DocumentAttributeKey.documentType]
-            as? NSAttributedString.DocumentType else { return nil }
+    let read = { () -> (NSAttributedString, NSAttributedString.DocumentType)? in
+      var attrs: NSDictionary?
+      guard let text = try? NSAttributedString(url: url, options: [:], documentAttributes: &attrs),
+            let kind = attrs?[NSAttributedString.DocumentAttributeKey.documentType]
+              as? NSAttributedString.DocumentType else { return nil }
+      return (text, kind)
+    }
+    // The HTML importer uses WebKit, which must run on the main thread.
+    let isWeb = type.conforms(to: .html) || type.conforms(to: .webArchive)
+    guard let (text, kind) = isWeb && !Thread.isMainThread ? DispatchQueue.main.sync(execute: read) : read()
+    else { return nil }
     return kind != .plain || isText ? text : nil
   }
 
@@ -241,21 +271,15 @@ extension FlutterPrintPlugin {
   }
 
   private func printRendered(
+    _ view: PaperPrintView,
+    printInfo: NSPrintInfo,
+    defaults: NSDictionary,
     options: PrintOptions?,
     showPanel: Bool,
-    completion: @escaping (Result<Void, Error>) -> Void,
-    makeView: (NSSize) -> PaperPrintView
+    completion: @escaping (Result<Void, Error>) -> Void
   ) {
-    // An unknown printer would silently fall back to the default one.
-    if let name = options?.printerAddress, !name.isEmpty, NSPrinter(name: name) == nil {
-      completion(.failure(PigeonError(code: "PRINTER_ERROR",
-                                      message: "Printer not found: \(name)")))
-      return
-    }
-    let (printInfo, defaults) = buildPrintInfo(options: options)
-    // Paginate now: a text document's page count depends on paper and margins.
-    // The view paginates again when printing (see PaperPrintView).
-    let view = makeView(printInfo.paperSize)
+    // Adopt the paper and margins (the text is already paginated for them).
+    // The view lays out again when printing (see PaperPrintView).
     view.layOut(for: printInfo)
     // Reversed ranges would trap; FlutterPrint already rejects them.
     let ranges = (options?.pageRanges ?? []).compactMap {
@@ -281,44 +305,42 @@ extension FlutterPrintPlugin {
     let requested = printInfo.printSettings.filter { key, value in
       !(defaults[key].map { ($0 as AnyObject).isEqual(value) } ?? false)
     }
-    DispatchQueue.main.async {
-      let op = NSPrintOperation(view: view, printInfo: printInfo)
-      op.showsPrintPanel = showPanel
-      op.showsProgressPanel = !showPanel
-      // By default the print panel only shows copies, page range and the
-      // preview. Enable the remaining controls so the panel actually reflects
-      // (and lets the user adjust) the options we applied to printInfo:
-      // paper size, orientation and scaling, plus the page-setup accessory.
-      if showPanel {
-        op.printPanel.options.formUnion([
-          .showsPaperSize,
-          .showsOrientation,
-          .showsScaling,
-          .showsPageSetupAccessory,
-        ])
-      }
-      // Attach as a sheet on the app's visible window so macOS can show the
-      // print panel correctly. run() (app-modal) fails with "does not support
-      // printing" when called outside a user-event context.
-      let window = NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible })
-      if showPanel, let window {
-        // The sheet is asynchronous; resolve the completion from the didRun
-        // callback, passing it through contextInfo as a retained box.
-        let context = Unmanaged.passRetained(PrintCompletionBox(completion)).toOpaque()
-        op.runModal(for: window, delegate: self,
-                    didRun: #selector(self.printOperationDidRun(_:success:contextInfo:)),
-                    contextInfo: context)
-        // Opening the panel applies the user's selected preset (e.g. "Default
-        // Settings"), overriding the requested settings it covers: restore them.
-        for (key, value) in requested { op.printInfo.printSettings[key] = value }
+    let op = NSPrintOperation(view: view, printInfo: printInfo)
+    op.showsPrintPanel = showPanel
+    op.showsProgressPanel = !showPanel
+    // By default the print panel only shows copies, page range and the
+    // preview. Enable the remaining controls so the panel actually reflects
+    // (and lets the user adjust) the options we applied to printInfo:
+    // paper size, orientation and scaling, plus the page-setup accessory.
+    if showPanel {
+      op.printPanel.options.formUnion([
+        .showsPaperSize,
+        .showsOrientation,
+        .showsScaling,
+        .showsPageSetupAccessory,
+      ])
+    }
+    // Attach as a sheet on the app's visible window so macOS can show the
+    // print panel correctly. run() (app-modal) fails with "does not support
+    // printing" when called outside a user-event context.
+    let window = NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible })
+    if showPanel, let window {
+      // The sheet is asynchronous; resolve the completion from the didRun
+      // callback, passing it through contextInfo as a retained box.
+      let context = Unmanaged.passRetained(PrintCompletionBox(completion)).toOpaque()
+      op.runModal(for: window, delegate: self,
+                  didRun: #selector(self.printOperationDidRun(_:success:contextInfo:)),
+                  contextInfo: context)
+      // Opening the panel applies the user's selected preset (e.g. "Default
+      // Settings"), overriding the requested settings it covers: restore them.
+      for (key, value) in requested { op.printInfo.printSettings[key] = value }
+    } else {
+      // run() is synchronous and returns whether the job succeeded.
+      if op.run() {
+        completion(.success(()))
       } else {
-        // run() is synchronous and returns whether the job succeeded.
-        if op.run() {
-          completion(.success(()))
-        } else {
-          completion(.failure(PigeonError(code: "PRINT_ERROR",
-                                          message: "Print operation failed")))
-        }
+        completion(.failure(PigeonError(code: "PRINT_ERROR",
+                                        message: "Print operation failed")))
       }
     }
   }
