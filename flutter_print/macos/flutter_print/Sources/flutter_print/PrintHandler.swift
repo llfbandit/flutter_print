@@ -1,5 +1,4 @@
 import Cocoa
-import FlutterMacOS
 import PDFKit
 import UniformTypeIdentifiers
 
@@ -21,8 +20,7 @@ private let paperSizesMm: [String: (Double, Double)] = [
   "C5": (162, 229), "DL": (110, 220),
 ]
 
-/// Boxes a Pigeon completion so it can be passed through the Objective-C
-/// `contextInfo` pointer of `NSPrintOperation.runModal(for:delegate:didRun:contextInfo:)`.
+/// Carries a completion through the `contextInfo` pointer of `runModal`.
 private final class PrintCompletionBox {
   let completion: (Result<Void, Error>) -> Void
   init(_ completion: @escaping (Result<Void, Error>) -> Void) {
@@ -48,7 +46,7 @@ extension FlutterPrintPlugin {
                                       message: "File not found: \(filePath)")))
       return
     }
-    // An unknown printer would silently fall back to the default one.
+    // Fail rather than fall back to the default printer.
     if let name = options?.printerAddress, !name.isEmpty, NSPrinter(name: name) == nil {
       completion(.failure(PigeonError(code: "PRINTER_ERROR",
                                       message: "Printer not found: \(name)")))
@@ -58,7 +56,7 @@ extension FlutterPrintPlugin {
     let fileURL = URL(fileURLWithPath: filePath)
     let (printInfo, defaults) = buildPrintInfo(options: options)
     let textRect = DocumentPrintView.textRect(for: printInfo)
-    // Reading and paginating a large file takes seconds: keep the UI responsive.
+    // Load off the main thread: a large document takes seconds.
     DispatchQueue.global(qos: .userInitiated).async {
       let loaded = Result { try self.loadForPrint(fileURL, textRect: textRect) }
       DispatchQueue.main.async {
@@ -68,11 +66,15 @@ extension FlutterPrintPlugin {
                              defaults: defaults, options: options,
                              showPanel: showPanel, completion: completion)
         case .success(nil) where showPanel:
-          // No native renderer: let the default app preview and print it.
-          self.openInDefaultApp(fileURL, errorCode: "PREVIEW_ERROR", completion: completion)
+          // No native renderer: let the default app preview and print the file.
+          if NSWorkspace.shared.open(fileURL) {
+            completion(.success(()))
+          } else {
+            completion(.failure(PigeonError(code: "PREVIEW_ERROR",
+                                            message: "Cannot open file: \(filePath)")))
+          }
         case .success(nil):
-          // Opening the default app would not print, so fail rather than
-          // report a success.
+          // Fail: opening the default app would not print.
           completion(.failure(PigeonError(code: "UNSUPPORTED_FILE",
                                           message: "File type not supported for printing")))
         case .failure(let error):
@@ -82,9 +84,8 @@ extension FlutterPrintPlugin {
     }
   }
 
-  /// Loads [fileURL] and returns a factory for the view that prints it, or nil
-  /// for a file type with no native renderer. Runs off the main thread; text
-  /// is paginated for [textRect] here, so the view doesn't have to.
+  /// Loads the file and returns a factory for its print view, or nil when no
+  /// native renderer handles its type. Paginates text for [textRect].
   private func loadForPrint(_ fileURL: URL, textRect: NSRect) throws -> ((NSSize) -> PaperPrintView)? {
     if fileURL.pathExtension.lowercased() == "pdf" {
       guard let doc = PDFDocument(url: fileURL) else {
@@ -103,49 +104,28 @@ extension FlutterPrintPlugin {
     return nil
   }
 
-  /// Reads any document AppKit can import (plain text, RTF, HTML, Word,
-  /// OpenDocument…) as styled text, or returns nil. AppKit reads files it
-  /// can't parse as raw plain text, so plain text is only accepted from files
-  /// whose type is text.
+  /// Reads a document AppKit can import (plain text, RTF, HTML, Word…), or nil.
   private func readDocument(_ url: URL) -> NSAttributedString? {
     guard #available(macOS 11, *),
           let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType
     else { return nil }
     let isText = type.conforms(to: .text)
-    // Skip media, archives and other non-documents: AppKit would read them
-    // whole as plain text before we could reject them.
+    // Skip media and archives: AppKit would read them whole as plain text.
     guard isText || type.conforms(to: .compositeContent) else { return nil }
-    let read = { () -> (NSAttributedString, NSAttributedString.DocumentType)? in
+    let read = { () -> NSAttributedString? in
       var attrs: NSDictionary?
       guard let text = try? NSAttributedString(url: url, options: [:], documentAttributes: &attrs),
             let kind = attrs?[NSAttributedString.DocumentAttributeKey.documentType]
               as? NSAttributedString.DocumentType else { return nil }
-      return (text, kind)
+      // AppKit reads unknown formats as plain text: accept that from text files only.
+      return kind != .plain || isText ? text : nil
     }
-    // The HTML importer uses WebKit, which must run on the main thread.
+    // The HTML importer uses WebKit, which runs on the main thread only.
     let isWeb = type.conforms(to: .html) || type.conforms(to: .webArchive)
-    guard let (text, kind) = isWeb && !Thread.isMainThread ? DispatchQueue.main.sync(execute: read) : read()
-    else { return nil }
-    return kind != .plain || isText ? text : nil
+    return isWeb && !Thread.isMainThread ? DispatchQueue.main.sync(execute: read) : read()
   }
 
-  /// Hands [fileURL] to its default application, reporting whether the open
-  /// succeeded. Runs on the main thread as required by NSWorkspace.
-  private func openInDefaultApp(_ fileURL: URL, errorCode: String,
-                                completion: @escaping (Result<Void, Error>) -> Void) {
-    DispatchQueue.main.async {
-      if NSWorkspace.shared.open(fileURL) {
-        completion(.success(()))
-      } else {
-        completion(.failure(PigeonError(code: errorCode,
-                                        message: "Cannot open file: \(fileURL.path)")))
-      }
-    }
-  }
-
-  /// Called by `runModal(for:delegate:didRun:contextInfo:)` when the print sheet
-  /// is dismissed. Cancellation (`success == false`) is treated as success, to
-  /// match the iOS dialog behaviour where cancelling is a normal outcome.
+  /// Completes a sheet print. Reports a cancel as success, like on iOS.
   @objc func printOperationDidRun(_ printOperation: NSPrintOperation,
                                   success: Bool,
                                   contextInfo: UnsafeMutableRawPointer?) {
@@ -154,21 +134,19 @@ extension FlutterPrintPlugin {
     box.completion(.success(()))
   }
 
-  /// Returns print info with [options] applied, and the printer's settings
-  /// before any option, to tell which settings the options changed.
+  /// Returns print info with [options] applied, and the printer defaults.
   private func buildPrintInfo(
     options: PrintOptions?
   ) -> (info: NSPrintInfo, defaults: NSDictionary) {
     let info = NSPrintInfo.shared.copy() as! NSPrintInfo
 
-    // Pick the printer first: the colour settings below depend on its driver.
+    // Set the printer first: the colour settings depend on its driver.
     if let name = options?.printerAddress, let printer = NSPrinter(name: name) {
       info.printer = printer
     }
     let defaults = info.printSettings.copy() as! NSDictionary
 
-    // Each option is applied only when provided; unset fields keep the system
-    // default print settings.
+    // Unset options keep the printer defaults.
     if let landscape = options?.landscape {
       info.orientation = landscape ? .landscape : .portrait
     }
@@ -181,23 +159,19 @@ extension FlutterPrintPlugin {
       }
       PMSetDuplex(OpaquePointer(info.pmPrintSettings()), mode)
       info.updateFromPMPrintSettings()
-      // Also set the standard PPD duplex option, which drivers and saved panel
-      // presets use; left at the driver default it could contradict the above.
+      // Set the PPD option too: drivers and panel presets read it.
       info.printSettings["Duplex"] = ppdChoice
     }
 
     if let color = options?.color {
-      // Force greyscale output when colour is disabled. Entries added to
-      // printSettings are forwarded to the print job as CUPS options, so this
-      // works for any driver, including ones without colour presets.
+      // The job gets print settings as CUPS options: this forces greyscale on
+      // any driver.
       if !color { info.printSettings["print-color-mode"] = "monochrome" }
-      // The print panel ignores that CUPS option; set the driver's own colour
-      // option so the panel shows the requested mode.
+      // The panel ignores the CUPS option and shows the driver's own.
       applyColorPreset(color, to: info)
     }
 
-    // Paper size is set in natural (portrait) dimensions; NSPrintInfo rotates
-    // it to match `orientation` automatically, so no manual landscape swap.
+    // Portrait size: NSPrintInfo rotates it for landscape.
     if let ps = options?.pageSize {
       if let (w, h) = paperSizesMm[ps.name] {
         info.paperSize = NSSize(width: w * mmToPts, height: h * mmToPts)
@@ -206,9 +180,7 @@ extension FlutterPrintPlugin {
       }
     }
 
-    // No margins requested: fill the whole sheet. Without this the inherited
-    // NSPrintInfo.shared defaults (~1 inch each side) would silently shrink
-    // the rendered PDF/image.
+    // Default to no margins, not the 1 inch of NSPrintInfo.shared.
     let m = options?.margins
     info.topMargin    = (m?.top    ?? 0) * mmToPts
     info.bottomMargin = (m?.bottom ?? 0) * mmToPts
@@ -224,10 +196,9 @@ extension FlutterPrintPlugin {
     return (info, defaults)
   }
 
-  /// Sets the driver options behind the print panel's colour control (e.g.
-  /// `ColorModel`), read from the printer's Apple presets: those whose value
-  /// differs between a monochrome preset and its colour twin. No-op when the
-  /// driver has no such presets.
+  /// Sets the driver options behind the panel's colour control (e.g.
+  /// `ColorModel`): those that differ between a monochrome preset and its
+  /// colour twin. Does nothing when the driver has no such presets.
   private func applyColorPreset(_ color: Bool, to info: NSPrintInfo) {
     var printer: PMPrinter?
     var listRef: Unmanaged<CFArray>?
@@ -235,21 +206,19 @@ extension FlutterPrintPlugin {
           let printer, PMPrinterCopyPresets(printer, &listRef) == noErr,
           let list = listRef?.takeRetainedValue() else { return }
 
-    // Key presets by their other traits (quality, paper coating…) so each
-    // monochrome preset pairs with the colour preset that differs only in mode.
-    // Keep the driver's order so every run picks the same pair.
+    // Pair presets that differ only in mode, keyed by their other traits
+    // (quality, paper…). Keep the driver's order for a stable choice.
     let modeKey = "com.apple.print.preset.output-mode"
     let settingsKey = "com.apple.print.preset.settings"
+    let ignored: Set = [modeKey, settingsKey, "com.apple.print.preset.id"]
     var mono: [(traits: NSDictionary, settings: [String: Any])] = []
     var colour: [NSDictionary: [String: Any]] = [:]
-    for i in 0..<CFArrayGetCount(list) {
-      let preset = unsafeBitCast(CFArrayGetValueAtIndex(list, i), to: PMPreset.self)
+    forEachPM(in: list, as: PMPreset.self) { preset in
       var attrsRef: Unmanaged<CFDictionary>?
       guard PMPresetGetAttributes(preset, &attrsRef) == noErr,
             let attrs = attrsRef?.takeUnretainedValue() as? [String: Any],
-            let settings = attrs[settingsKey] as? [String: Any] else { continue }
-      let excluded: Set = [modeKey, settingsKey, "com.apple.print.preset.id"]
-      let traits = NSDictionary(dictionary: attrs.filter { !excluded.contains($0.key) })
+            let settings = attrs[settingsKey] as? [String: Any] else { return }
+      let traits = NSDictionary(dictionary: attrs.filter { !ignored.contains($0.key) })
       if attrs[modeKey] as? String == "monochrome" {
         mono.append((traits, settings))
       } else if colour[traits] == nil {
@@ -257,14 +226,15 @@ extension FlutterPrintPlugin {
       }
     }
 
+    let pairs = mono.compactMap { m in
+      colour[m.traits].map { (traits: m.traits, mono: m.settings, colour: $0) }
+    }
     // Prefer the normal-quality pair.
-    let pairs = mono.compactMap { m in colour[m.traits].map { (m.traits, m.settings, $0) } }
-    guard let (_, m, c) = pairs.first(where: {
-            $0.0["com.apple.print.preset.quality"] as? String == "mid"
+    guard let pair = pairs.first(where: {
+            $0.traits["com.apple.print.preset.quality"] as? String == "mid"
           }) ?? pairs.first else { return }
-    // Set what the wanted preset sets differently, including options the
-    // other preset lacks.
-    let (wanted, other) = color ? (c, m) : (m, c)
+    // Set what the wanted preset sets differently, even keys the other lacks.
+    let (wanted, other) = color ? (pair.colour, pair.mono) : (pair.mono, pair.colour)
     for (key, value) in wanted where !(value as AnyObject).isEqual(other[key]) {
       info.printSettings[key] = value
     }
@@ -278,10 +248,9 @@ extension FlutterPrintPlugin {
     showPanel: Bool,
     completion: @escaping (Result<Void, Error>) -> Void
   ) {
-    // Adopt the paper and margins (the text is already paginated for them).
-    // The view lays out again when printing (see PaperPrintView).
+    // Text is already paginated for this paper: this only sets the frame.
     view.layOut(for: printInfo)
-    // Reversed ranges would trap; FlutterPrint already rejects them.
+    // Skip reversed ranges: they would trap. FlutterPrint rejects them anyway.
     let ranges = (options?.pageRanges ?? []).compactMap {
       $0.start <= $0.end ? Int($0.start)...Int($0.end) : nil
     }
@@ -291,9 +260,8 @@ extension FlutterPrintPlugin {
                                       message: "Page ranges select no page")))
       return
     }
-    // A single range goes to the panel's "Range from … to …" over the whole
-    // document, where the user can see and edit it. The panel can't express a
-    // discontinuous selection, so for those the view prints only the pages.
+    // The panel shows a single range and lets the user edit it. It can't show
+    // several, so the view prints only their pages.
     if ranges.count == 1 {
       view.pageRanges = []
       let attrs = printInfo.dictionary()
@@ -308,10 +276,7 @@ extension FlutterPrintPlugin {
     let op = NSPrintOperation(view: view, printInfo: printInfo)
     op.showsPrintPanel = showPanel
     op.showsProgressPanel = !showPanel
-    // By default the print panel only shows copies, page range and the
-    // preview. Enable the remaining controls so the panel actually reflects
-    // (and lets the user adjust) the options we applied to printInfo:
-    // paper size, orientation and scaling, plus the page-setup accessory.
+    // Show the controls for the options we set.
     if showPanel {
       op.printPanel.options.formUnion([
         .showsPaperSize,
@@ -320,28 +285,22 @@ extension FlutterPrintPlugin {
         .showsPageSetupAccessory,
       ])
     }
-    // Attach as a sheet on the app's visible window so macOS can show the
-    // print panel correctly. run() (app-modal) fails with "does not support
-    // printing" when called outside a user-event context.
+    // Show the panel as a sheet: run() fails with "does not support printing"
+    // outside a user event.
     let window = NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible })
     if showPanel, let window {
-      // The sheet is asynchronous; resolve the completion from the didRun
-      // callback, passing it through contextInfo as a retained box.
       let context = Unmanaged.passRetained(PrintCompletionBox(completion)).toOpaque()
       op.runModal(for: window, delegate: self,
                   didRun: #selector(self.printOperationDidRun(_:success:contextInfo:)),
                   contextInfo: context)
-      // Opening the panel applies the user's selected preset (e.g. "Default
-      // Settings"), overriding the requested settings it covers: restore them.
+      // The panel applies the user's preset (e.g. "Default Settings") on open:
+      // restore the requested settings.
       for (key, value) in requested { op.printInfo.printSettings[key] = value }
+    } else if op.run() {
+      completion(.success(()))
     } else {
-      // run() is synchronous and returns whether the job succeeded.
-      if op.run() {
-        completion(.success(()))
-      } else {
-        completion(.failure(PigeonError(code: "PRINT_ERROR",
-                                        message: "Print operation failed")))
-      }
+      completion(.failure(PigeonError(code: "PRINT_ERROR",
+                                      message: "Print operation failed")))
     }
   }
 }

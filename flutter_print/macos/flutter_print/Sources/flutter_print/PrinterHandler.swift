@@ -1,30 +1,36 @@
 import Cocoa
 
+/// Calls [body] with each Printing Manager object (PMPrinter, PMPaper…) of
+/// [array]. The array owns the objects: don't keep them after the call.
+func forEachPM<T>(in array: CFArray, as type: T.Type, _ body: (T) -> Void) {
+  for i in 0..<CFArrayGetCount(array) {
+    guard let object = CFArrayGetValueAtIndex(array, i) else { continue }
+    body(unsafeBitCast(object, to: T.self))
+  }
+}
+
 extension FlutterPrintPlugin {
   func pickPrinter(completion: @escaping (Result<PrinterInfo?, any Error>) -> Void) {
-    // macOS has no equivalent UI picker; use listPrinters() instead.
+    // macOS has no printer picker: use listPrinters().
     completion(.success(nil))
   }
 
   func listPrinters(completion: @escaping (Result<[PrinterInfo], any Error>) -> Void) {
-    // NSPrinter.printerNames can trigger network lookups for Bonjour printers,
-    // so enumerate on a background queue to avoid stalling the platform thread.
+    // Run off the main thread: listing Bonjour printers can hit the network.
     DispatchQueue.global(qos: .userInitiated).async {
       var pmInfo: [String: (isAvailable: Bool, capabilities: PrinterCapabilities)] = [:]
       var listRef: Unmanaged<CFArray>?
       if PMServerCreatePrinterList(nil, &listRef) == noErr,
-         let cfArray = listRef?.takeRetainedValue() {
-        for i in 0..<CFArrayGetCount(cfArray) {
-          guard let rawPtr = CFArrayGetValueAtIndex(cfArray, i) else { continue }
-          let pmPrinter = unsafeBitCast(rawPtr, to: PMPrinter.self)
-          guard let nameRef = PMPrinterGetName(pmPrinter),
-                let name = nameRef.takeUnretainedValue() as String? else { continue }
+         let list = listRef?.takeRetainedValue() {
+        forEachPM(in: list, as: PMPrinter.self) { printer in
+          guard let name = PMPrinterGetName(printer)?.takeUnretainedValue() as String?
+          else { return }
           var state: PMPrinterState = 0
-          PMPrinterGetState(pmPrinter, &state)
+          PMPrinterGetState(printer, &state)
           pmInfo[name] = (
             isAvailable: state == PMPrinterState(kPMPrinterIdle)
               || state == PMPrinterState(kPMPrinterProcessing),
-            capabilities: Self.capabilities(for: pmPrinter))
+            capabilities: Self.capabilities(for: printer))
         }
       }
 
@@ -49,9 +55,8 @@ extension FlutterPrintPlugin {
     supportedPageSizes: []
   )
 
-  /// Page sizes from the paper list; color/duplex/max-copies from the PPD.
-  /// Both paths work inside the App Sandbox; PPD fields degrade to unknown/nil
-  /// if the read ever fails.
+  /// Reads page sizes from the paper list, and colour, duplex and max copies
+  /// from the PPD. Both work in the App Sandbox.
   private static func capabilities(for printer: PMPrinter) -> PrinterCapabilities {
     let parsed = ppdText(for: printer).map(parsePpd)
     return PrinterCapabilities(
@@ -63,21 +68,17 @@ extension FlutterPrintPlugin {
   }
 
   private static func supportedPageSizes(for printer: PMPrinter) -> [String] {
-    var paperListRef: Unmanaged<CFArray>?
-    guard PMPrinterGetPaperList(printer, &paperListRef) == noErr,
-          let cfArray = paperListRef?.takeUnretainedValue() else { return [] }
+    var listRef: Unmanaged<CFArray>?
+    guard PMPrinterGetPaperList(printer, &listRef) == noErr,
+          let list = listRef?.takeUnretainedValue() else { return [] }
 
     var result: [String] = []
-    var seen = Set<String>()
-    for i in 0..<CFArrayGetCount(cfArray) {
-      guard let rawPtr = CFArrayGetValueAtIndex(cfArray, i) else { continue }
-      let paper = unsafeBitCast(rawPtr, to: PMPaper.self)
+    forEachPM(in: list, as: PMPaper.self) { paper in
       var nameRef: Unmanaged<CFString>?
       guard PMPaperGetPPDPaperName(paper, &nameRef) == noErr,
-            let ppdName = nameRef?.takeUnretainedValue() as String? else { continue }
-      if let mapped = ppdPageSizeName[ppdName], seen.insert(mapped).inserted {
-        result.append(mapped)
-      }
+            let ppdName = nameRef?.takeUnretainedValue() as String?,
+            let name = ppdPageSizeName[ppdName], !result.contains(name) else { return }
+      result.append(name)
     }
     return result
   }
@@ -86,12 +87,11 @@ extension FlutterPrintPlugin {
     var urlRef: Unmanaged<CFURL>?
     guard PMPrinterCopyDescriptionURL(printer, kPMPPDDescriptionType as CFString, &urlRef) == noErr,
           let url = urlRef?.takeRetainedValue() as URL? else { return nil }
-    // isoLatin1 so no byte sequence can fail to decode.
+    // Latin-1 decodes any bytes.
     return try? String(contentsOf: url, encoding: .isoLatin1)
   }
 
-  /// PPD paper-name keywords mapped to the plugin's well-known names
-  /// (see `paperSizesMm`); unlisted keywords are dropped.
+  /// PPD paper names mapped to the plugin's names (see `paperSizesMm`).
   private static let ppdPageSizeName: [String: String] = [
     "A0": "A0", "A1": "A1", "A2": "A2", "A3": "A3",
     "A4": "A4", "A5": "A5", "A6": "A6",
@@ -108,9 +108,9 @@ extension FlutterPrintPlugin {
     _ ppd: String
   ) -> (color: ColorCapability, supportsDuplex: Bool, maxCopies: Int64?) {
     var color: ColorCapability = .unknown
-    // No Duplex section in the PPD means no duplex support → false, not unknown.
+    // A PPD without a Duplex option has no duplex: false, not unknown.
     var supportsDuplex = false
-    var maxCopies: Int64? = nil
+    var maxCopies: Int64?
 
     ppd.enumerateLines { line, _ in
       if line.hasPrefix("*ColorDevice:") {

@@ -8,34 +8,31 @@ private func aspectFit(_ size: NSSize, in rect: NSRect) -> NSRect {
   return NSRect(x: rect.midX - w / 2, y: rect.midY - h / 2, width: w, height: h)
 }
 
-/// A one-sheet-per-page print view sized to the print operation's paper.
-/// Paper and margins are re-read on every pagination, so changes made in the
-/// print panel (paper size, orientation) apply to the preview and the output.
+/// A print view with one page per sheet. It reads paper and margins again on
+/// each pagination, so changes in the panel apply.
 class PaperPrintView: NSView {
-  /// Area within the sheet content is scaled into (paper size minus the
-  /// requested margins), in unflipped view coordinates.
+  /// Sheet minus margins, in unflipped coordinates.
   private(set) var contentRect: NSRect
 
-  /// 1-based page ranges to print; empty prints every page. Kept as ranges
-  /// rather than indices so they still apply after re-pagination.
+  /// 1-based pages to print; empty prints all. Ranges still apply after
+  /// re-pagination.
   var pageRanges: [ClosedRange<Int>] = []
 
-  /// Document page drawn by the next draw(_:).
+  /// Document page the next draw(_:) draws.
   private(set) var currentPage = 0
 
-  /// Number of pages in the document at the current layout.
+  /// Page count at the current layout.
   var documentPageCount: Int { 1 }
 
-  /// 0-based document pages to print, in output order. Lets the job skip
-  /// pages (discontinuous selections like 2–6,9,15) while NSView still sees a
-  /// contiguous 1..n range.
+  /// 0-based document pages to print. NSView sees them as pages 1…n, so the
+  /// job can skip pages (e.g. 2–6,9).
   var pages: [Int] {
     let all = 0..<documentPageCount
     if pageRanges.isEmpty { return Array(all) }
     return all.filter { i in pageRanges.contains { $0.contains(i + 1) } }
   }
 
-  /// [pages] as of the last pagination, used while printing each page.
+  /// [pages] at the last pagination.
   private var printedPages: [Int] = []
 
   init(paperSize: NSSize) {
@@ -45,7 +42,7 @@ class PaperPrintView: NSView {
 
   required init?(coder: NSCoder) { fatalError() }
 
-  /// Adopts [info]'s paper and margins. Subclasses re-paginate here.
+  /// Adopts the paper and margins of [info]. Subclasses paginate here.
   func layOut(for info: NSPrintInfo) {
     setFrameSize(info.paperSize)
     contentRect = Self.contentRect(for: info)
@@ -69,14 +66,14 @@ class PaperPrintView: NSView {
   }
 
   override func rectForPage(_ page: Int) -> NSRect {
-    // `page` is the 1-based output position; map it to the document page.
+    // Map the 1-based output page to the document page.
     currentPage = printedPages[page - 1]
     return bounds
   }
 }
 
 class ImagePrintView: PaperPrintView {
-  let image: NSImage
+  private let image: NSImage
 
   init(image: NSImage, paperSize: NSSize) {
     self.image = image
@@ -93,7 +90,7 @@ class ImagePrintView: PaperPrintView {
 }
 
 class PDFPagePrintView: PaperPrintView {
-  let document: PDFDocument
+  private let document: PDFDocument
 
   init(document: PDFDocument, paperSize: NSSize) {
     self.document = document
@@ -108,7 +105,7 @@ class PDFPagePrintView: PaperPrintView {
     guard let ctx = NSGraphicsContext.current?.cgContext,
           let page = document.page(at: currentPage) else { return }
 
-    // Size as displayed: the crop box, turned by the page's rotation.
+    // Use the size as shown: the crop box, turned by the page rotation.
     let box = page.bounds(for: .cropBox)
     let size = page.rotation % 180 == 0 ? box.size : NSSize(width: box.height, height: box.width)
     let fit = aspectFit(size, in: contentRect)
@@ -118,7 +115,7 @@ class PDFPagePrintView: PaperPrintView {
     let s = fit.width / size.width
     ctx.translateBy(x: fit.minX, y: fit.minY)
     ctx.scaleBy(x: s, y: s)
-    // Applies the crop box origin and the page rotation.
+    // Applies the crop box and the rotation.
     page.draw(with: .cropBox, to: ctx)
 
     ctx.restoreGState()
@@ -146,8 +143,8 @@ class DocumentPrintView: PaperPrintView {
     text.layOut(in: Self.textRect(for: info))
   }
 
-  /// Area text flows into on each sheet, in flipped view coordinates. Kept
-  /// inside the printer's printable area, even with zero margins.
+  /// Text area of a sheet, in flipped coordinates. Stays in the printable
+  /// area, even with zero margins.
   static func textRect(for info: NSPrintInfo) -> NSRect {
     let r = contentRect(for: info).intersection(info.imageablePageBounds)
     return NSRect(x: r.minX, y: info.paperSize.height - r.maxY, width: r.width, height: r.height)
@@ -158,12 +155,11 @@ class DocumentPrintView: PaperPrintView {
   }
 }
 
-/// Splits styled text into pages of a text area. Not a view, so it can
-/// paginate off the main thread.
+/// Splits styled text into pages. Not a view, so it can run off the main thread.
 final class TextPages: NSObject, NSLayoutManagerDelegate {
   private let storage: NSTextStorage
   private let layoutManager = NSLayoutManager()
-  // A single container: each added container slows down the layout of all.
+  // Use one container: layout slows down with each added container.
   private let container = NSTextContainer()
   private var textRect = NSRect.zero
   /// Glyphs of each page, and the page's top in the container.
@@ -186,8 +182,7 @@ final class TextPages: NSObject, NSLayoutManagerDelegate {
     fitAttachments()
     container.size = NSSize(width: rect.width, height: .greatestFiniteMagnitude)
 
-    // Break between lines: before a line that would overflow the page, and
-    // after a page break.
+    // Break between lines: before a line that overflows, and after a page break.
     let text = storage.string as NSString
     let all = NSRange(location: 0, length: layoutManager.numberOfGlyphs)
     var start = 0, top: CGFloat = 0, pageBreak = false
@@ -213,26 +208,24 @@ final class TextPages: NSObject, NSLayoutManagerDelegate {
     layoutManager.drawGlyphs(forGlyphRange: glyphs, at: origin)
   }
 
-  // The single container can't honour page breaks (form feeds); lay them out
-  // as line breaks and break the page in layOut(in:).
+  // One container can't break pages: turn page breaks into line breaks, and
+  // let layOut(in:) start the new page.
   func layoutManager(_ layoutManager: NSLayoutManager,
                      shouldUse action: NSLayoutManager.ControlCharacterAction,
                      forControlCharacterAt charIndex: Int) -> NSLayoutManager.ControlCharacterAction {
     action == .containerBreak ? .lineBreak : action
   }
 
-  /// Scales images larger than the text area down to fit, so they aren't cut
-  /// off at the bottom of the sheet.
+  /// Scales down images larger than the text area, so the sheet doesn't cut them.
   private func fitAttachments() {
-    // Text containers inset each line by their padding on both sides.
+    // Containers pad each line on both sides.
     let width = textRect.width - 2 * container.lineFragmentPadding
     let height = textRect.height
     storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) {
       value, range, _ in
       guard let attachment = value as? NSTextAttachment else { return }
-      // Cell-based attachments (from HTML/RTFD imports) ignore `bounds`; lay
-      // their image out directly instead. Decoded from the file, as the cell
-      // is main-thread only.
+      // Cell attachments (HTML, RTFD) ignore `bounds`: use the image instead.
+      // Decode it from the file, as the cell is main-thread only.
       if attachment.image == nil,
          let data = attachment.fileWrapper?.regularFileContents,
          let image = NSImage(data: data) {
