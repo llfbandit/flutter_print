@@ -19,7 +19,7 @@ extension FlutterPrintPlugin {
           guard let rawPtr = CFArrayGetValueAtIndex(cfArray, i) else { continue }
           let pmPrinter = unsafeBitCast(rawPtr, to: PMPrinter.self)
           guard let nameRef = PMPrinterGetName(pmPrinter),
-                let name = nameRef.takeUnretainedValue() as String? else { continue }
+                let name = nameRef as? String else { continue }
           var state: PMPrinterState = 0
           PMPrinterGetState(pmPrinter, &state)
           availabilityMap[name] = (state == PMPrinterState(kPMPrinterIdle)
