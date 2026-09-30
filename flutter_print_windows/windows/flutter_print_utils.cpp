@@ -2,15 +2,14 @@
 
 #include <urlmon.h>
 #include <winspool.h>
+
+#include <iterator>
+
 #pragma comment(lib, "urlmon.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "winspool.lib")
 
 namespace flutter_print {
-
-// ---------------------------------------------------------------------------
-// String
-// ---------------------------------------------------------------------------
 
 std::wstring Utf8ToWide(const std::string& s) {
   if (s.empty()) return {};
@@ -30,32 +29,21 @@ std::string WideToUtf8(const WCHAR* w) {
   return s;
 }
 
-// ---------------------------------------------------------------------------
-// File-type detection
-// ---------------------------------------------------------------------------
-
 std::string GetMimeType(const std::wstring& path) {
   BYTE header[256] = {};
   DWORD bytesRead = 0;
   HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
-                              nullptr, OPEN_EXISTING,
-                              FILE_ATTRIBUTE_NORMAL, nullptr);
+                             nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+                             nullptr);
   if (hFile != INVALID_HANDLE_VALUE) {
     ReadFile(hFile, header, sizeof(header), &bytesRead, nullptr);
     CloseHandle(hFile);
   }
 
   LPWSTR mimeW = nullptr;
-  HRESULT hr = FindMimeFromData(
-      nullptr,
-      path.c_str(),
-      bytesRead > 0 ? header : nullptr,
-      bytesRead,
-      nullptr,
-      FMFD_DEFAULT,
-      &mimeW,
-      0);
-
+  HRESULT hr = FindMimeFromData(nullptr, path.c_str(),
+                                bytesRead > 0 ? header : nullptr, bytesRead,
+                                nullptr, FMFD_DEFAULT, &mimeW, 0);
   if (FAILED(hr) || !mimeW) return "application/octet-stream";
   std::string mime = WideToUtf8(mimeW);
   CoTaskMemFree(mimeW);
@@ -67,13 +55,9 @@ bool IsRenderableMime(const std::string& mime) {
          mime.rfind("text/", 0) == 0;
 }
 
-// ---------------------------------------------------------------------------
-// Printers
-// ---------------------------------------------------------------------------
-
 std::wstring DefaultPrinterName() {
   WCHAR buf[512] = {};
-  DWORD sz = static_cast<DWORD>(sizeof(buf) / sizeof(WCHAR));
+  DWORD sz = static_cast<DWORD>(std::size(buf));
   GetDefaultPrinterW(buf, &sz);
   return buf;
 }

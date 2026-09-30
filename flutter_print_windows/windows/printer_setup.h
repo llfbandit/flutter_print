@@ -1,6 +1,5 @@
 #pragma once
 
-#define NOMINMAX
 #include <windows.h>
 #include <winspool.h>
 
@@ -13,11 +12,7 @@
 
 namespace flutter_print {
 
-// ---------------------------------------------------------------------------
-// Paper names
-// ---------------------------------------------------------------------------
-
-// Paper-size IDs mapped to the well-known names the Dart layer uses.
+// DMPAPER_* IDs and the paper names the Dart layer uses.
 inline constexpr std::pair<WORD, const char*> kKnownPapers[] = {
     {static_cast<WORD>(DMPAPER_A3),        "A3"},
     {static_cast<WORD>(DMPAPER_A4),        "A4"},
@@ -33,30 +28,17 @@ inline constexpr std::pair<WORD, const char*> kKnownPapers[] = {
     {static_cast<WORD>(DMPAPER_ENV_C5),    "C5"},
 };
 
-// ---------------------------------------------------------------------------
-// DEVMODE
-// ---------------------------------------------------------------------------
-
-// Returns the printer's default DEVMODE (driver-sized), or empty on error.
+// Returns the printer's default DEVMODE, or empty on error.
 std::vector<BYTE> GetDefaultDevMode(const std::wstring& printerName);
 
-// ---------------------------------------------------------------------------
-// Printer DC
-// ---------------------------------------------------------------------------
-
-// Creates a printer DC for |printerName| with |options| applied. When |options|
-// is null the printer's default settings are used unchanged.
-// Caller must DeleteDC the returned handle. When |out_software_copies| is
-// non-null it receives the number of copies that must be produced in software
-// because the driver cannot replicate them natively (1 when the driver handles
-// all requested copies); see RenderToDC's |copies| parameter.
+// Creates a printer DC with |options| applied, or with the printer defaults
+// when |options| is null. The caller must DeleteDC it.
+// |out_software_copies| gets the copies the driver can't make itself (1 when
+// it makes them all). Pass it to RenderToDC.
 HDC CreatePrinterDC(const std::wstring& printerName, const PrintOptions* options,
                     int* out_software_copies = nullptr);
 
-// ---------------------------------------------------------------------------
-// Hardware margins
-// ---------------------------------------------------------------------------
-
+// Margins in mm.
 struct PrinterMargins {
   double left;
   double top;
@@ -64,10 +46,9 @@ struct PrinterMargins {
   double bottom;
 };
 
-// Returns the hardware (unprintable-area) margins in mm for |printerName|
-// with the given paper size. |paperSizeName| is a well-known name (e.g.
-// "A4"); if empty, |paperWidthMm| and |paperHeightMm| are used for a custom
-// size. Returns nullopt when the printer DC cannot be created.
+// Returns the unprintable margins of |printerName| for a paper size.
+// |paperSizeName| is a known name like "A4"; when it is empty or unknown, the
+// width and height give a custom size. Returns nullopt on error.
 std::optional<PrinterMargins> GetMinimumMargins(const std::wstring& printerName,
                                                 const std::string& paperSizeName,
                                                 double paperWidthMm,

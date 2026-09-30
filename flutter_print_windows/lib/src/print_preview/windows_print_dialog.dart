@@ -7,20 +7,14 @@ import 'print_dialog_utils.dart';
 import 'widgets/print_preview_panel.dart';
 import 'widgets/print_settings_panel.dart';
 
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
-
+/// Shows the print dialog, then prints [filePath] with the chosen options.
 Future<void> showWindowsPrintDialog(
   BuildContext context,
   String filePath,
   PrintOptions? initialOptions,
 ) async {
-  // The in-app dialog can only preview (and apply settings to) PDF, image and
-  // text files. For anything else, showing it would present a blank preview and
-  // controls that the underlying shell-print path silently ignores. Instead,
-  // open the file in its associated application, where the user gets a faithful
-  // view and the app's own fully featured print flow.
+  // The dialog previews PDF, image and text files only. Open other files in
+  // their default app, which has its own print flow.
   final mime = await WindowsPrintChannel.getMimeType(filePath);
   if (!mimeIsPdf(mime) && !mimeIsImage(mime) && !mimeIsText(mime)) {
     await WindowsPrintChannel.openInDefaultApp(filePath);
@@ -30,8 +24,8 @@ Future<void> showWindowsPrintDialog(
 
   final locale = Localizations.maybeLocaleOf(context) ?? const Locale('en');
 
-  // Use showGeneralDialog (Flutter core) instead of fluent_ui's showDialog,
-  // which asserts FluentLocalizations on the *caller's* context.
+  // Not fluent_ui's showDialog: it needs FluentLocalizations in the caller's
+  // context.
   final options = await showGeneralDialog<PrintOptions>(
     context: context,
     barrierDismissible: false,
@@ -48,9 +42,9 @@ Future<void> showWindowsPrintDialog(
       ],
       child: FluentTheme(
         data: _buildTheme(MediaQuery.platformBrightnessOf(ctx)),
-        // Nested Navigator so ComboBox (rootNavigator:false) pushes its popup
-        // route into this sub-tree, where FluentLocalizations is available.
-        // Dialog close always uses rootNavigator:true to pop the outer route.
+        // ComboBox pushes its popup on the nearest Navigator: keep it in this
+        // tree, which has FluentLocalizations. The dialog closes with
+        // rootNavigator: true.
         child: Navigator(
           onGenerateRoute: (_) => PageRouteBuilder<void>(
             opaque: false,
@@ -72,9 +66,8 @@ Future<void> showWindowsPrintDialog(
   await FlutterPrintApi().print(filePath, options: options);
 }
 
-// ComboBox items dim their text to textFillColorSecondary on hover, which
-// looks unexpectedly faded. Override it to match primary so hover only
-// changes the background, not the text opacity.
+// ComboBox items fade their text to textFillColorSecondary on hover. Set it to
+// the primary color, so hover changes the background only.
 FluentThemeData _buildTheme(Brightness brightness) {
   final dark = brightness == Brightness.dark;
   final base = dark ? FluentThemeData.dark() : FluentThemeData.light();
@@ -85,10 +78,6 @@ FluentThemeData _buildTheme(Brightness brightness) {
         : ResourceDictionary.light(textFillColorSecondary: text),
   );
 }
-
-// ---------------------------------------------------------------------------
-// Dialog widget
-// ---------------------------------------------------------------------------
 
 class _PrintDialog extends StatefulWidget {
   const _PrintDialog({

@@ -34,7 +34,7 @@ class PrintPreviewPanel extends StatefulWidget {
   final String filePath;
   final String mimeType;
 
-  /// PDF page count, or null while loading.
+  /// Null while loading, 0 when unknown.
   final int? pageCount;
   final PrintOptions options;
 
@@ -192,12 +192,11 @@ class _PrintPdfPreview extends StatefulWidget {
 class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
   Uint8List? _previewImg;
 
-  /// 0-based document page indices to preview, in output order — mirrors the
-  /// selection sent to the printer so the preview only pages through what will
-  /// actually be printed. Empty until the page count is known.
+  /// 0-based indices of the pages to print. Empty until the page count is
+  /// known.
   List<int> _selected = const [];
 
-  /// Position within [_selected] currently shown.
+  /// Index in [_selected] of the shown page.
   int _pos = 0;
   bool _loadingPreview = false;
 
@@ -237,8 +236,7 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
     }
   }
 
-  /// Rebuilds [_selected] from the current page count and requested ranges
-  /// (all pages when unset/empty) and clamps [_pos] into the new list.
+  /// Rebuilds [_selected] from the page ranges and keeps [_pos] in it.
   void _recomputeSelection() {
     final ranges = widget.pageRanges;
     if (_pageCount <= 0) {
@@ -256,7 +254,7 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
     }
   }
 
-  // Start rendering the page at [_pos]. The caller rebuilds.
+  // Starts rendering the page at [_pos]. The caller rebuilds.
   void _startRender() {
     final request = ++_request;
     _previewImg = null;
@@ -328,8 +326,7 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
                       : null,
                 ),
                 const SizedBox(width: 8),
-                // Show the printed page number, plus its position in the
-                // selection when a custom range is active.
+                // Show the page number, and its position in a custom range.
                 Text(
                   _selected.length == _pageCount
                       ? '${_selected[_pos] + 1} / $_pageCount'

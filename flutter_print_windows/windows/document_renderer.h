@@ -1,6 +1,5 @@
 #pragma once
 
-#define NOMINMAX
 #include <windows.h>
 
 #include <optional>
@@ -12,44 +11,30 @@
 
 namespace flutter_print {
 
-// One or more 1-based, inclusive page ranges (e.g. {{2, 6}, {9, 9}} for pages
-// 2–6 and 9). An empty vector means "all pages".
+// 1-based, inclusive page ranges, e.g. {{2, 6}, {9, 9}}. Empty means all pages.
 using PageRanges = std::vector<std::pair<int, int>>;
 
-// ---------------------------------------------------------------------------
-// Print rendering — to a printer DC
-// ---------------------------------------------------------------------------
-
-// Renders |wPath| to |hdc| with the renderer for |mime|, which must satisfy
-// IsRenderableMime. Caller retains ownership of |hdc|.
-// |copies| is the number of copies the driver could NOT replicate natively and
-// that must therefore be emitted in software (1 when the driver handles them).
-// |ranges| restricts which pages are printed (all pages when empty); returns
-// INVALID_PAGE_RANGE when it selects no page.
+// Prints |wPath| to |hdc|. |mime| must pass IsRenderableMime.
+// |copies| is the number of copies to draw (see CreatePrinterDC).
+// Returns INVALID_PAGE_RANGE when |ranges| selects no page.
 std::optional<FlutterError> RenderToDC(HDC hdc, const std::wstring& wPath,
                                        const std::string& mime, int copies,
                                        const PageRanges& ranges);
 
-// Hands |wPath| to its associated application via the shell "print" verb, or
-// "printto" |printerName| when non-empty. Print options are not honoured.
+// Prints |wPath| with its default app, on |printerName| when not empty.
+// The app ignores the print options.
 std::optional<FlutterError> ShellPrint(const std::wstring& wPath,
                                        const std::wstring& printerName);
 
-// ---------------------------------------------------------------------------
-// Preview rendering — for the Flutter Windows print dialog
-// ---------------------------------------------------------------------------
-
-// Read |path| as text, decode bytes honouring UTF-16 LE/BE, UTF-8 (BOM or
-// plain), and the system ANSI code page (CP_ACP). Returns {} on read error.
+// Reads a text file in UTF-16, UTF-8 or the ANSI code page. Returns {} on
+// error.
 std::wstring ReadTextFile(const std::wstring& path);
 
-// Returns the number of pages in the PDF at |path|, or 0 on error.
-// Thread-safe; PDFium access is serialised internally.
+// Returns the PDF page count, or 0 on error. Thread-safe.
 int GetPdfPageCount(const std::wstring& path);
 
-// Renders page |pageIndex| (0-based) of the PDF at |path| at |dpi| resolution
-// and returns the result as a PNG-encoded byte vector. Returns {} on error.
-// Thread-safe; PDFium access is serialised internally.
+// Renders a PDF page (0-based) to PNG bytes at |dpi|. Returns {} on error.
+// Thread-safe.
 std::vector<uint8_t> RenderPdfPageToPng(const std::wstring& path,
                                          int pageIndex,
                                          double dpi);

@@ -47,7 +47,8 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
     return name == custom?.name ? custom! : pageSizeFromName(name);
   }
 
-  void _validateSettings() {
+  // Limits the options to what the printer supports.
+  void _fitToCapabilities() {
     final caps = _caps;
     if (caps == null) return;
 
@@ -87,8 +88,8 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
       _customPageSize = ps;
     }
 
-    // Normalise unset fields to concrete display defaults so the dialog UI and
-    // preview stay consistent; the user's choices are then sent explicitly.
+    // Fill unset fields with the values the UI shows, so the preview and the
+    // print job match them.
     _options = opts.copyWith(
       copies: opts.copies ?? 1,
       landscape: opts.landscape ?? false,
@@ -106,7 +107,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
   void _emit(PrintOptions opts) {
     setState(() {
       _options = opts;
-      _validateSettings();
+      _fitToCapabilities();
     });
 
     widget.onOptionsChanged(_options);

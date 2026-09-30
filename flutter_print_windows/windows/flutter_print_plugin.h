@@ -20,7 +20,7 @@ class FlutterPrintPlugin : public flutter::Plugin, public FlutterPrintApi {
  public:
   static void RegisterWithRegistrar(flutter::PluginRegistrarWindows* registrar);
 
-  explicit FlutterPrintPlugin(HWND hwnd);
+  FlutterPrintPlugin();
   ~FlutterPrintPlugin() override;
 
   FlutterPrintPlugin(const FlutterPrintPlugin&) = delete;
@@ -36,20 +36,17 @@ class FlutterPrintPlugin : public flutter::Plugin, public FlutterPrintApi {
   void ListPrinters(
       std::function<void(ErrorOr<flutter::EncodableList>)> result) override;
 
-  // Windows-specific extras: PDF preview rendering for the Flutter print dialog.
-  void HandleWindowsMethod(
-      const flutter::MethodCall<flutter::EncodableValue>& call,
-      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
-
  private:
-  // Synchronous core of Print(); the public override forwards its result to the
-  // Pigeon completion callback.
-  std::optional<FlutterError> PrintInternal(const std::string& file_path,
-                                            const PrintOptions* options);
-
   using WinResult =
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>;
 
+  std::optional<FlutterError> PrintInternal(const std::string& file_path,
+                                            const PrintOptions* options);
+
+  // Windows channel, used by the Dart print dialog.
+  void HandleWindowsMethod(
+      const flutter::MethodCall<flutter::EncodableValue>& call,
+      WinResult result);
   void HandleGetMimeType(const flutter::EncodableMap& args, WinResult result);
   void HandleGetPdfPageCount(const flutter::EncodableMap& args, WinResult result);
   void HandleRenderPdfPageToPng(const flutter::EncodableMap& args, WinResult result);
@@ -57,7 +54,7 @@ class FlutterPrintPlugin : public flutter::Plugin, public FlutterPrintApi {
   void HandleGetMinimumMargins(const flutter::EncodableMap& args, WinResult result);
   void HandleOpenInDefaultApp(const flutter::EncodableMap& args, WinResult result);
 
-  HWND hwnd_;
+  // Set to false on destruction: worker threads then drop their reply.
   std::shared_ptr<std::atomic<bool>> alive_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       windows_channel_;

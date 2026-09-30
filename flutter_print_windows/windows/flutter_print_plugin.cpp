@@ -1,8 +1,8 @@
-#define NOMINMAX  // must precede flutter_print_plugin.h's <windows.h>
 #include "flutter_print_plugin.h"
+
+#include "document_renderer.h"
 #include "flutter_print_utils.h"
 #include "printer_setup.h"
-#include "document_renderer.h"
 
 #include <shellapi.h>
 #include <algorithm>
@@ -15,15 +15,18 @@
 
 namespace flutter_print {
 
-// Converts the pageRanges field of |options| (a list of PageRange) into the
-// PageRanges vector the renderers expect. Returns an empty vector (= all pages)
-// when unset or empty.
-static PageRanges ExtractPageRanges(const PrintOptions* options) {
+namespace {
+
+using WinResult =
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>;
+
+// Returns the page ranges of |options|. Empty means all pages.
+PageRanges ExtractPageRanges(const PrintOptions* options) {
   PageRanges ranges;
   const flutter::EncodableList* list =
       options ? options->page_ranges() : nullptr;
   if (!list) return ranges;
-  // Clamp so huge values don't wrap when narrowed to int.
+  // Clamp so huge values don't wrap in an int.
   const auto clamp = [](int64_t v) {
     return static_cast<int>(std::clamp<int64_t>(v, 0, INT_MAX));
   };
@@ -36,64 +39,146 @@ static PageRanges ExtractPageRanges(const PrintOptions* options) {
   return ranges;
 }
 
-// ---------------------------------------------------------------------------
-// C API — called by the Flutter engine at startup
-// ---------------------------------------------------------------------------
-
-void FlutterPrintPluginRegisterWithRegistrar(
-    FlutterDesktopPluginRegistrarRef registrar) {
-  FlutterPrintPlugin::RegisterWithRegistrar(
-      flutter::PluginRegistrarManager::GetInstance()
-          ->GetRegistrar<flutter::PluginRegistrarWindows>(registrar));
+// Fills |buf| with PRINTER_INFO_2W entries. Returns the entry count.
+DWORD EnumPrinterInfos(std::vector<BYTE>& buf) {
+  constexpr DWORD kFlags = PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS;
+  // Retry when a printer is added between the size query and the read.
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    DWORD needed = 0, returned = 0;
+    EnumPrintersW(kFlags, nullptr, 2, nullptr, 0, &needed, &returned);
+    if (needed == 0) return 0;
+    buf.resize(needed);
+    if (EnumPrintersW(kFlags, nullptr, 2, buf.data(), needed, &needed,
+                      &returned))
+      return returned;
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) return 0;
+  }
+  return 0;
 }
 
-// ---------------------------------------------------------------------------
-// FlutterPrintPlugin
-// ---------------------------------------------------------------------------
+// True for the ports of virtual printers: PORTPROMPT: (Print to PDF, XPS…),
+// nul: (OneNote) and NULPORT:.
+bool IsVirtualPort(const WCHAR* port) {
+  if (!port) return false;
+  for (const WCHAR* name : {L"PORTPROMPT:", L"nul:", L"NULPORT:"}) {
+    if (_wcsicmp(port, name) == 0) return true;
+  }
+  return false;
+}
+
+ColorCapability QueryColor(const WCHAR* name, const WCHAR* port) {
+  // Virtual printers report color like real ones: check the port first.
+  if (IsVirtualPort(port)) return ColorCapability::kEnforced;
+
+  const DWORD r = DeviceCapabilitiesW(name, port, DC_COLORDEVICE, nullptr, nullptr);
+  if (r == 1) return ColorCapability::kSupported;
+  if (r != 0) return ColorCapability::kUnknown;
+  // A few virtual printers report monochrome but set DM_COLOR.
+  const std::vector<BYTE> dm = GetDefaultDevMode(name);
+  if (!dm.empty() &&
+      (reinterpret_cast<const DEVMODE*>(dm.data())->dmFields & DM_COLOR))
+    return ColorCapability::kEnforced;
+  return ColorCapability::kMonochrome;
+}
+
+PrinterCapabilities QueryCapabilities(const WCHAR* name, const WCHAR* port) {
+  constexpr DWORD kUnsupported = static_cast<DWORD>(-1);
+
+  std::optional<bool> duplex;
+  if (DWORD r = DeviceCapabilitiesW(name, port, DC_DUPLEX, nullptr, nullptr);
+      r != kUnsupported)
+    duplex = r == 1;
+
+  std::optional<int64_t> maxCopies;
+  if (DWORD r = DeviceCapabilitiesW(name, port, DC_COPIES, nullptr, nullptr);
+      r != kUnsupported && r > 0)
+    maxCopies = r;
+
+  flutter::EncodableList pageSizes;
+  const DWORD count = DeviceCapabilitiesW(name, port, DC_PAPERS, nullptr, nullptr);
+  if (count != kUnsupported && count > 0) {
+    std::vector<WORD> papers(count);
+    DeviceCapabilitiesW(name, port, DC_PAPERS,
+                        reinterpret_cast<LPWSTR>(papers.data()), nullptr);
+    const std::unordered_set<WORD> supported(papers.begin(), papers.end());
+    for (const auto& [id, paperName] : kKnownPapers) {
+      if (supported.count(id))
+        pageSizes.push_back(flutter::EncodableValue(std::string(paperName)));
+    }
+  }
+
+  return PrinterCapabilities(QueryColor(name, port),
+                             duplex ? &*duplex : nullptr,
+                             maxCopies ? &*maxCopies : nullptr, pageSizes);
+}
+
+// Returns args[key] when it holds a T, else null.
+template <typename T>
+const T* GetArg(const flutter::EncodableMap& args, const char* key) {
+  auto it = args.find(flutter::EncodableValue(key));
+  return it == args.end() ? nullptr : std::get_if<T>(&it->second);
+}
+
+// Returns the "filePath" argument, or reports INVALID_ARGS and returns nullopt.
+std::optional<std::wstring> GetFilePathArg(
+    const flutter::EncodableMap& args,
+    flutter::MethodResult<flutter::EncodableValue>& result) {
+  const auto* path = GetArg<std::string>(args, "filePath");
+  if (!path) {
+    result.Error("INVALID_ARGS", "Missing filePath");
+    return std::nullopt;
+  }
+  return Utf8ToWide(*path);
+}
+
+// Runs |work| on a worker thread and replies with the value it returns.
+template <typename Work>
+void ReplyAsync(std::shared_ptr<std::atomic<bool>> alive, WinResult result,
+                Work work) {
+  std::thread([alive = std::move(alive), result = std::move(result),
+               work = std::move(work)]() mutable {
+    const flutter::EncodableValue value = work();
+    if (alive->load()) result->Success(value);
+  }).detach();
+}
+
+}  // namespace
 
 // static
 void FlutterPrintPlugin::RegisterWithRegistrar(
     flutter::PluginRegistrarWindows* registrar) {
-  HWND hwnd = registrar->GetView()
-                  ? reinterpret_cast<HWND>(registrar->GetView()->GetNativeWindow())
-                  : nullptr;
-  auto plugin = std::make_unique<FlutterPrintPlugin>(hwnd);
+  auto plugin = std::make_unique<FlutterPrintPlugin>();
   FlutterPrintApi::SetUp(registrar->messenger(), plugin.get());
 
-  // Windows-specific method channel: PDF preview rendering for the Flutter
-  // print dialog. Lives alongside the Pigeon channel.
-  auto* plugin_ptr = plugin.get();
-  auto win_channel =
+  // Windows channel, next to the Pigeon one.
+  plugin->windows_channel_ =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           registrar->messenger(), "flutter_print_windows",
           &flutter::StandardMethodCodec::GetInstance());
-  win_channel->SetMethodCallHandler(
-      [plugin_ptr](
-          const flutter::MethodCall<flutter::EncodableValue>& call,
-          std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  plugin->windows_channel_->SetMethodCallHandler(
+      [plugin_ptr = plugin.get()](const auto& call, auto result) {
         plugin_ptr->HandleWindowsMethod(call, std::move(result));
       });
-  plugin->windows_channel_ = std::move(win_channel);
 
   registrar->AddPlugin(std::move(plugin));
 }
 
-FlutterPrintPlugin::FlutterPrintPlugin(HWND hwnd)
-    : hwnd_(hwnd), alive_(std::make_shared<std::atomic<bool>>(true)) {}
+FlutterPrintPlugin::FlutterPrintPlugin()
+    : alive_(std::make_shared<std::atomic<bool>>(true)) {}
 
 FlutterPrintPlugin::~FlutterPrintPlugin() {
   *alive_ = false;
 }
 
 // ---------------------------------------------------------------------------
-// FlutterPrintApi — Print / PrintPreview
+// FlutterPrintApi
 // ---------------------------------------------------------------------------
 
 void FlutterPrintPlugin::Print(
     const std::string& file_path, const PrintOptions* options,
     std::function<void(std::optional<FlutterError> reply)> result) {
-  // Spool off the platform thread so the UI stays responsive. options is owned
-  // by the caller and freed on return, so copy it (null = printer defaults).
+  // Print off the platform thread to keep the UI responsive. Copy |options|:
+  // the caller frees it on return.
   std::optional<PrintOptions> optionsCopy;
   if (options) optionsCopy = *options;
   std::thread([this, file_path, optionsCopy = std::move(optionsCopy),
@@ -113,7 +198,7 @@ std::optional<FlutterError> FlutterPrintPlugin::PrintInternal(
   const std::string* pn = options ? options->printer_address() : nullptr;
   std::wstring wPrinter = (pn && !pn->empty()) ? Utf8ToWide(*pn) : std::wstring{};
 
-  // Other file types: delegate to the file's associated application.
+  // Other file types go to their default app.
   const std::string mime = GetMimeType(wPath);
   if (!IsRenderableMime(mime)) return ShellPrint(wPath, wPrinter);
 
@@ -121,8 +206,7 @@ std::optional<FlutterError> FlutterPrintPlugin::PrintInternal(
   if (wPrinter.empty())
     return FlutterError("PRINTER_ERROR", "No printer available");
 
-  // When options is null the caller wants the printer's default settings; pass
-  // it through untouched so no DEVMODE overrides are applied.
+  // Null |options| keeps the printer defaults.
   int softwareCopies = 1;
   HDC hdc = CreatePrinterDC(wPrinter, options, &softwareCopies);
   if (!hdc)
@@ -138,13 +222,9 @@ std::optional<FlutterError> FlutterPrintPlugin::PrintInternal(
 void FlutterPrintPlugin::PrintPreview(
     const std::string& /*file_path*/, const PrintOptions* /*options*/,
     std::function<void(std::optional<FlutterError> reply)> result) {
-  // Preview is handled entirely in Dart via showWindowsPrintDialog.
+  // Dart shows the preview dialog.
   result(std::nullopt);
 }
-
-// ---------------------------------------------------------------------------
-// FlutterPrintApi — ListPrinters / PickPrinter
-// ---------------------------------------------------------------------------
 
 void FlutterPrintPlugin::PickPrinter(
     std::function<void(ErrorOr<std::optional<PrinterInfo>>)> result) {
@@ -153,147 +233,37 @@ void FlutterPrintPlugin::PickPrinter(
 
 void FlutterPrintPlugin::ListPrinters(
     std::function<void(ErrorOr<flutter::EncodableList>)> result) {
-  // EnumPrintersW can block while resolving network printers.
+  // Enumerate off the platform thread: network printers can block.
   std::thread([result = std::move(result), alive = alive_]() {
-    auto reply = [&](flutter::EncodableList list) {
-      if (alive->load()) result(std::move(list));
-    };
-
-    DWORD needed = 0, returned = 0;
     std::vector<BYTE> buf;
-    bool ok = false;
-    for (int attempt = 0; attempt < 5 && !ok; ++attempt) {
-      needed = 0; returned = 0;
-      EnumPrintersW(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, nullptr, 2,
-                    nullptr, 0, &needed, &returned);
-      if (needed == 0) { reply(flutter::EncodableList{}); return; }
-      buf.resize(needed);
-      ok = !!EnumPrintersW(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, nullptr,
-                           2, buf.data(), needed, &needed, &returned);
-      if (!ok && GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
-        reply(flutter::EncodableList{}); return;
-      }
-      // ERROR_INSUFFICIENT_BUFFER: a printer was added between the two calls; retry.
-    }
-    if (!ok) { reply(flutter::EncodableList{}); return; }
-
+    const DWORD count = EnumPrinterInfos(buf);
+    const auto* info = reinterpret_cast<const PRINTER_INFO_2W*>(buf.data());
     const std::wstring defaultPrinter = DefaultPrinterName();
 
-    auto* info = reinterpret_cast<PRINTER_INFO_2W*>(buf.data());
     flutter::EncodableList printers;
-
-    for (DWORD i = 0; i < returned; ++i) {
+    for (DWORD i = 0; i < count; ++i) {
       const WCHAR* name = info[i].pPrinterName;
       if (!name) continue;
-      const WCHAR* port = info[i].pPortName;
 
-      // Color support.
-      ColorCapability colorCap = ColorCapability::kUnknown;
-      {
-        // Case-insensitive port-name comparison (port names are always ASCII).
-        auto portEq = [](const WCHAR* a, const WCHAR* b) -> bool {
-          return a && _wcsicmp(a, b) == 0;
-        };
-        // Detect virtual/software printers by port name before querying
-        // DC_COLORDEVICE — on modern Windows virtual printers return 1 (colour)
-        // indistinguishably from physical colour printers.
-        //   PORTPROMPT: — Microsoft Print to PDF, XPS Document Writer, Adobe PDF, etc.
-        //   nul:        — OneNote (Desktop) and other null-sink drivers
-        //   NULPORT:    — alternate null-port name used by some virtual drivers
-        const bool isVirtualPort = portEq(port, L"PORTPROMPT:")
-                                || portEq(port, L"nul:")
-                                || portEq(port, L"NULPORT:");
-
-        if (isVirtualPort) {
-          colorCap = ColorCapability::kEnforced;
-        } else {
-          DWORD r = DeviceCapabilitiesW(name, port, DC_COLORDEVICE, nullptr, nullptr);
-          if (r == 1) {
-            colorCap = ColorCapability::kSupported;
-          } else if (r == 0) {
-            // DC_COLORDEVICE reports monochrome; default to kMonochrome so any
-            // probe failure leaves us with the authoritative DC_COLORDEVICE answer.
-            colorCap = ColorCapability::kMonochrome;
-            // Verify via DEVMODE — a small number of drivers carry DM_COLOR in
-            // dmFields despite reporting 0, indicating a virtual/software printer.
-            const std::vector<BYTE> dm = GetDefaultDevMode(name);
-            if (!dm.empty() &&
-                (reinterpret_cast<const DEVMODE*>(dm.data())->dmFields & DM_COLOR))
-              colorCap = ColorCapability::kEnforced;  // DM_COLOR despite r==0 → virtual
-          }
-          // r == -1: DC_COLORDEVICE not implemented — capability stays unknown.
-        }
-      }
-
-      // Duplex support
-      const bool* duplexPtr = nullptr;
-      bool duplexBool = false;
-      {
-        DWORD r = DeviceCapabilitiesW(name, port, DC_DUPLEX, nullptr, nullptr);
-        if (r != (DWORD)-1) { duplexBool = (r == 1); duplexPtr = &duplexBool; }
-      }
-
-      // Maximum copies
-      const int64_t* copiesPtr = nullptr;
-      int64_t copiesVal = 0;
-      {
-        DWORD r = DeviceCapabilitiesW(name, port, DC_COPIES, nullptr, nullptr);
-        if (r != (DWORD)-1 && r > 0) { copiesVal = static_cast<int64_t>(r); copiesPtr = &copiesVal; }
-      }
-
-      // Supported paper sizes
-      flutter::EncodableList pageSizes;
-      {
-        DWORD count = DeviceCapabilitiesW(name, port, DC_PAPERS, nullptr, nullptr);
-        if (count != (DWORD)-1 && count > 0) {
-          std::vector<WORD> papers(count);
-          DeviceCapabilitiesW(name, port, DC_PAPERS,
-                              reinterpret_cast<LPWSTR>(papers.data()), nullptr);
-          std::unordered_set<WORD> supported(papers.begin(), papers.end());
-          for (const auto& [id, pname] : kKnownPapers) {
-            if (supported.count(id)) {
-              pageSizes.push_back(flutter::EncodableValue(std::string(pname)));
-            }
-          }
-        }
-      }
-
-      PrinterCapabilities caps(colorCap, duplexPtr, copiesPtr, pageSizes);
-
-      std::string detailsStr;
-      const std::string* detailsPtr = nullptr;
-      if (info[i].pComment && info[i].pComment[0]) {
-        detailsStr = WideToUtf8(info[i].pComment);
-        detailsPtr = &detailsStr;
-      }
+      std::string details;
+      if (info[i].pComment) details = WideToUtf8(info[i].pComment);
       const std::string nameUtf8 = WideToUtf8(name);
-      bool avail = !(info[i].Status & PRINTER_STATUS_OFFLINE);
+      const bool available = !(info[i].Status & PRINTER_STATUS_OFFLINE);
       printers.push_back(flutter::CustomEncodableValue(PrinterInfo(
-          nameUtf8, &nameUtf8, detailsPtr, std::wstring(name) == defaultPrinter,
-          caps, &avail)));
+          nameUtf8, &nameUtf8, details.empty() ? nullptr : &details,
+          name == defaultPrinter, QueryCapabilities(name, info[i].pPortName),
+          &available)));
     }
-    reply(std::move(printers));
+    if (alive->load()) result(std::move(printers));
   }).detach();
 }
 
 // ---------------------------------------------------------------------------
-// Windows-specific method channel — PDF preview rendering
+// Windows channel
 // ---------------------------------------------------------------------------
 
-namespace {
-// Extracts "filePath" from |args|, reports INVALID_ARGS on |result| and
-// returns nullopt if missing.
-std::optional<std::wstring> GetFilePathArg(const flutter::EncodableMap& args, flutter::MethodResult<flutter::EncodableValue>& result) {
-  auto it = args.find(flutter::EncodableValue("filePath"));
-  if (it == args.end()) {
-    result.Error("INVALID_ARGS", "Missing filePath");
-    return std::nullopt;
-  }
-  return Utf8ToWide(std::get<std::string>(it->second));
-}
-}  // namespace
-
-void FlutterPrintPlugin::HandleWindowsMethod(const flutter::MethodCall<flutter::EncodableValue>& call, WinResult result) {
+void FlutterPrintPlugin::HandleWindowsMethod(
+    const flutter::MethodCall<flutter::EncodableValue>& call, WinResult result) {
   const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
   if (!args) { result->Error("INVALID_ARGS", "Expected map"); return; }
 
@@ -307,70 +277,78 @@ void FlutterPrintPlugin::HandleWindowsMethod(const flutter::MethodCall<flutter::
   result->NotImplemented();
 }
 
-void FlutterPrintPlugin::HandleGetMimeType(const flutter::EncodableMap& args, WinResult result) {
+void FlutterPrintPlugin::HandleGetMimeType(const flutter::EncodableMap& args,
+                                           WinResult result) {
   auto wPath = GetFilePathArg(args, *result);
   if (!wPath) return;
-  std::thread([result = std::move(result), wPath = std::move(*wPath),
-               alive = alive_]() mutable {
-    if (alive->load())
-      result->Success(flutter::EncodableValue(GetMimeType(wPath)));
-  }).detach();
+  ReplyAsync(alive_, std::move(result), [wPath = std::move(*wPath)] {
+    return flutter::EncodableValue(GetMimeType(wPath));
+  });
 }
 
-void FlutterPrintPlugin::HandleGetPdfPageCount(const flutter::EncodableMap& args, WinResult result) {
+void FlutterPrintPlugin::HandleGetPdfPageCount(const flutter::EncodableMap& args,
+                                               WinResult result) {
   auto wPath = GetFilePathArg(args, *result);
   if (!wPath) return;
-  std::thread([result = std::move(result), wPath = std::move(*wPath),
-               alive = alive_]() mutable {
-    if (alive->load())
-      result->Success(flutter::EncodableValue(GetPdfPageCount(wPath)));
-  }).detach();
+  ReplyAsync(alive_, std::move(result), [wPath = std::move(*wPath)] {
+    return flutter::EncodableValue(GetPdfPageCount(wPath));
+  });
 }
 
-void FlutterPrintPlugin::HandleRenderPdfPageToPng(const flutter::EncodableMap& args, WinResult result) {
+void FlutterPrintPlugin::HandleRenderPdfPageToPng(
+    const flutter::EncodableMap& args, WinResult result) {
   auto wPath = GetFilePathArg(args, *result);
   if (!wPath) return;
+  const auto* pageIndex = GetArg<int32_t>(args, "pageIndex");
+  const auto* dpi = GetArg<double>(args, "dpi");
+  ReplyAsync(alive_, std::move(result),
+             [wPath = std::move(*wPath), pageIndex = pageIndex ? *pageIndex : 0,
+              dpi = dpi ? *dpi : 150.0] {
+               auto png = RenderPdfPageToPng(wPath, pageIndex, dpi);
+               return png.empty() ? flutter::EncodableValue()
+                                  : flutter::EncodableValue(std::move(png));
+             });
+}
 
-  int pageIndex = 0;
-  if (auto it = args.find(flutter::EncodableValue("pageIndex"));
-      it != args.end()) {
-    if (auto* i32 = std::get_if<int32_t>(&it->second)) pageIndex = *i32;
-    else if (auto* i64 = std::get_if<int64_t>(&it->second))
-      pageIndex = static_cast<int>(*i64);
+void FlutterPrintPlugin::HandleDecodeTextFile(const flutter::EncodableMap& args,
+                                              WinResult result) {
+  auto wPath = GetFilePathArg(args, *result);
+  if (!wPath) return;
+  ReplyAsync(alive_, std::move(result), [wPath = std::move(*wPath)] {
+    return flutter::EncodableValue(WideToUtf8(ReadTextFile(wPath).c_str()));
+  });
+}
+
+void FlutterPrintPlugin::HandleGetMinimumMargins(
+    const flutter::EncodableMap& args, WinResult result) {
+  const auto* printer = GetArg<std::string>(args, "printerName");
+  if (!printer) {
+    result->Error("INVALID_ARGS", "Missing printerName");
+    return;
   }
-
-  double dpi = 150.0;
-  if (auto it = args.find(flutter::EncodableValue("dpi")); it != args.end()) {
-    if (auto* d = std::get_if<double>(&it->second)) dpi = *d;
-  }
-
-  std::thread([result = std::move(result), wPath = std::move(*wPath),
-               pageIndex, dpi, alive = alive_]() mutable {
-    auto png = RenderPdfPageToPng(wPath, pageIndex, dpi);
-    if (!alive->load()) return;
-    result->Success(png.empty() ? flutter::EncodableValue()
-                                : flutter::EncodableValue(png));
-  }).detach();
+  const auto* paperName = GetArg<std::string>(args, "paperSizeName");
+  const auto* width = GetArg<double>(args, "paperWidth");
+  const auto* height = GetArg<double>(args, "paperHeight");
+  ReplyAsync(alive_, std::move(result),
+             [wPrinter = Utf8ToWide(*printer),
+              paperName = paperName ? *paperName : std::string{},
+              width = width ? *width : 0.0, height = height ? *height : 0.0] {
+               auto m = GetMinimumMargins(wPrinter, paperName, width, height);
+               if (!m) return flutter::EncodableValue();
+               return flutter::EncodableValue(flutter::EncodableMap{
+                   {flutter::EncodableValue("left"),   flutter::EncodableValue(m->left)},
+                   {flutter::EncodableValue("top"),    flutter::EncodableValue(m->top)},
+                   {flutter::EncodableValue("right"),  flutter::EncodableValue(m->right)},
+                   {flutter::EncodableValue("bottom"), flutter::EncodableValue(m->bottom)},
+               });
+             });
 }
 
-void FlutterPrintPlugin::HandleDecodeTextFile(const flutter::EncodableMap& args, WinResult result) {
+void FlutterPrintPlugin::HandleOpenInDefaultApp(const flutter::EncodableMap& args,
+                                                WinResult result) {
   auto wPath = GetFilePathArg(args, *result);
   if (!wPath) return;
-  std::thread([result = std::move(result), wPath = std::move(*wPath),
-               alive = alive_]() mutable {
-    const std::wstring text = ReadTextFile(wPath);
-    if (!alive->load()) return;
-    result->Success(flutter::EncodableValue(WideToUtf8(text.c_str())));
-  }).detach();
-}
-
-void FlutterPrintPlugin::HandleOpenInDefaultApp(const flutter::EncodableMap& args, WinResult result) {
-  auto wPath = GetFilePathArg(args, *result);
-  if (!wPath) return;
-  // Opens |file| in its associated application (the shell "open" verb) so the
-  // user gets a faithful view and the app's own print flow. Used by
-  // printPreview for file types the in-app dialog cannot preview. We do NOT
-  // wait on the launched app — it is expected to stay open for the user.
+  // Open the file with the shell "open" verb. Don't wait for the app.
   std::thread([result = std::move(result), wPath = std::move(*wPath),
                alive = alive_]() mutable {
     SHELLEXECUTEINFOW sei = {};
@@ -388,41 +366,6 @@ void FlutterPrintPlugin::HandleOpenInDefaultApp(const flutter::EncodableMap& arg
       result->Error("SHELL_ERROR",
                     "Failed to open file (error " + std::to_string(e) + ")");
     }
-  }).detach();
-}
-
-void FlutterPrintPlugin::HandleGetMinimumMargins(const flutter::EncodableMap& args, WinResult result) {
-  auto it = args.find(flutter::EncodableValue("printerName"));
-  if (it == args.end()) {
-    result->Error("INVALID_ARGS", "Missing printerName");
-    return;
-  }
-  const std::wstring wPrinter = Utf8ToWide(std::get<std::string>(it->second));
-
-  std::string paperSizeName;
-  if (auto jt = args.find(flutter::EncodableValue("paperSizeName")); jt != args.end()) {
-    if (auto* s = std::get_if<std::string>(&jt->second)) paperSizeName = *s;
-  }
-  double paperWidthMm = 0.0;
-  if (auto jt = args.find(flutter::EncodableValue("paperWidth")); jt != args.end()) {
-    if (auto* d = std::get_if<double>(&jt->second)) paperWidthMm = *d;
-  }
-  double paperHeightMm = 0.0;
-  if (auto jt = args.find(flutter::EncodableValue("paperHeight")); jt != args.end()) {
-    if (auto* d = std::get_if<double>(&jt->second)) paperHeightMm = *d;
-  }
-
-  std::thread([result = std::move(result), wPrinter, paperSizeName,
-               paperWidthMm, paperHeightMm, alive = alive_]() mutable {
-    auto m = GetMinimumMargins(wPrinter, paperSizeName, paperWidthMm, paperHeightMm);
-    if (!alive->load()) return;
-    if (!m) { result->Success(flutter::EncodableValue()); return; }
-    result->Success(flutter::EncodableValue(flutter::EncodableMap{
-        {flutter::EncodableValue("left"),   flutter::EncodableValue(m->left)},
-        {flutter::EncodableValue("top"),    flutter::EncodableValue(m->top)},
-        {flutter::EncodableValue("right"),  flutter::EncodableValue(m->right)},
-        {flutter::EncodableValue("bottom"), flutter::EncodableValue(m->bottom)},
-    }));
   }).detach();
 }
 
