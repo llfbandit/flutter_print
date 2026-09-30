@@ -667,10 +667,10 @@ FlutterPrintPrinterCapabilities* flutter_print_printer_info_get_capabilities(Flu
  *
  * `true` — printer is idle or processing (online).
  * `false` — printer is offline or stopped.
- * `null` — availability cannot be determined on this platform
- *   (Android and iOS).
+ * `null` — availability cannot be determined on this platform (Android).
  *
- * Platform support: macOS, Windows, Linux.
+ * Platform support: macOS, Windows, Linux, and iOS (from
+ * [FlutterPrintApi.pickPrinter], when the printer answers).
  *
  * Returns: the field value.
  */

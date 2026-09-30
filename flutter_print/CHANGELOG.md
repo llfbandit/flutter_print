@@ -10,6 +10,8 @@
 * fix(ios): Reject a print job while another one runs, instead of changing the open dialog.
 * fix(ios): Present from the Flutter view, and anchor the iPad popover to its centre.
 * fix(ios): Fail with `PRINTER_ERROR` for an invalid or unreachable `printerAddress`.
+* feat(ios): Use photo output for images.
+* feat(ios): Report availability, colour and duplex support of the printer from `pickPrinter`.
 
 ## 0.4.0
 * feat: Make print options nullable to get system defaults.

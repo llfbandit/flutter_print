@@ -118,7 +118,7 @@ Options a platform doesn't support are silently ignored.
 | `duplexMode`     | ✔️⁵     | ✔️  | ✔️    | ✔️²     | ✔️    |     |
 | `pageRanges`     |         |     | ✔️    | ✔️²     | ✔️    |     |
 
-¹ With a `printerAddress` from `FlutterPrint.ios?.pickPrinter()`.  
+¹ `print` only, with an address from `FlutterPrint.ios?.pickPrinter()`. `printPreview` ignores it.  
 ² For PDF, image and text files only.  
 ³ Requires the CUPS development libraries at build time (see [Linux](#linux)).  
 ⁴ The print panel shows the requested `color` when the printer driver has

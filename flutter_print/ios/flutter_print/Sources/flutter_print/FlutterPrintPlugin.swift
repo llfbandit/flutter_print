@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import UniformTypeIdentifiers
 
 public class FlutterPrintPlugin: NSObject, FlutterPlugin {
   private weak var registrar: FlutterPluginRegistrar?
@@ -44,17 +45,21 @@ extension FlutterPrintPlugin: FlutterPrintApi {
         completion(.success(nil))
         return
       }
-      completion(.success(PrinterInfo(
-        label: printer.displayName,
-        address: printer.url.absoluteString,
-        isDefault: false,
-        capabilities: PrinterCapabilities(
-          colorCapability: .unknown,
-          supportsDuplex: nil,
-          maxCopies: nil,
-          supportedPageSizes: []
-        )
-      )))
+      // Contact the printer: its capabilities are valid only after that.
+      printer.contactPrinter { available in DispatchQueue.main.async {
+        completion(.success(PrinterInfo(
+          label: printer.displayName,
+          address: printer.url.absoluteString,
+          isDefault: false,
+          capabilities: PrinterCapabilities(
+            colorCapability: !available ? .unknown : printer.supportsColor ? .supported : .monochrome,
+            supportsDuplex: available ? printer.supportsDuplex : nil,
+            maxCopies: nil,
+            supportedPageSizes: []
+          ),
+          isAvailable: available
+        )))
+      }}
     }
 
     let presented = UIDevice.current.userInterfaceIdiom == .pad
@@ -98,7 +103,10 @@ private extension FlutterPrintPlugin {
     printInfo.jobName = fileURL.lastPathComponent
     // Unset options keep the system defaults.
     if let color = options?.color {
-      printInfo.outputType = color ? .general : .grayscale
+      // Photo types pick photo paper and quality for images.
+      printInfo.outputType = Self.isImage(fileURL)
+        ? (color ? .photo : .photoGrayscale)
+        : (color ? .general : .grayscale)
     }
     if let landscape = options?.landscape {
       printInfo.orientation = landscape ? .landscape : .portrait
@@ -174,6 +182,13 @@ private extension FlutterPrintPlugin {
 
   static let noWindowError = PigeonError(code: "NO_WINDOW",
                                          message: "No view to present the print dialog")
+
+  static func isImage(_ url: URL) -> Bool {
+    guard #available(iOS 14, *),
+          let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType
+    else { return false }
+    return type.conforms(to: .image)
+  }
 
   /// A point at the centre of [view]: a full-view rect leaves the popover
   /// arrow no room.

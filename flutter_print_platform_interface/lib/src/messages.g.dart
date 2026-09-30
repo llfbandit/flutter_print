@@ -550,10 +550,10 @@ class PrinterInfo {
   ///
   /// `true` — printer is idle or processing (online).
   /// `false` — printer is offline or stopped.
-  /// `null` — availability cannot be determined on this platform
-  ///   (Android and iOS).
+  /// `null` — availability cannot be determined on this platform (Android).
   ///
-  /// Platform support: macOS, Windows, Linux.
+  /// Platform support: macOS, Windows, Linux, and iOS (from
+  /// [FlutterPrintApi.pickPrinter], when the printer answers).
   bool? isAvailable;
 
   List<Object?> _toList() {
