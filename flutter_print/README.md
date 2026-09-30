@@ -119,7 +119,7 @@ Options a platform doesn't support are silently ignored.
 | `pageRanges`     |         |     | ✔️    | ✔️²     | ✔️    |     |
 
 ¹ `print` only, with an address from `FlutterPrint.ios?.pickPrinter()`. `printPreview` ignores it.  
-² For PDF, image and text files only.  
+² For PDF, image, EMF/WMF and text files only.  
 ³ Requires the CUPS development libraries at build time (see [Linux](#linux)).  
 ⁴ The print panel shows the requested `color` when the printer driver has
 colour presets (AirPrint and most drivers).  
@@ -135,12 +135,15 @@ from the requested settings.
 | Android  | Native       | Not supported  | Not supported |
 | iOS      | Native       | `UNSUPPORTED_FILE` | `UNSUPPORTED_FILE` |
 | macOS    | Native       | Native¹        | `print` fails with `UNSUPPORTED_FILE`; `printPreview` opens the default app |
-| Windows  | Native       | Native²        | Printed by the associated application, with its own settings |
+| Windows  | Native²      | Native³        | Printed by the associated application, with its own settings⁴ |
 | Linux    | CUPS         | CUPS           | CUPS |
 | Web      | Browser      | Browser        | Browser |
 
 ¹ Plain text, RTF, HTML, Word and OpenDocument text (macOS 11+).  
-² Any `text/*` file, printed as plain text.
+² Also EMF and WMF, printed as vectors.  
+³ Any text file, detected by its content (`.txt`, `.csv`, `.json`, `.md`,
+`.log`, source code…), printed as plain text.  
+⁴ Including HTML, SVG and RTF.
 
 ## Image support by platform
 
@@ -159,6 +162,10 @@ from the requested settings.
 Windows 11 for HEIC).  
 ³ Requires the matching GDK-Pixbuf loader: `webp-pixbuf-loader` for WebP,
 `libheif` + `heif-pixbuf-loader` for HEIC.
+
+On Windows, any format with an installed WIC codec prints too (AVIF, JPEG XL,
+camera RAW…). Each page of a TIFF prints as a page, and page ranges apply.
+Photos print upright from their EXIF orientation.
 
 ---
 

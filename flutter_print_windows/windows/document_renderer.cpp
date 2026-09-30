@@ -9,8 +9,10 @@
 
 #include <fpdfview.h>
 #include <algorithm>
+#include <cctype>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <type_traits>
 
 #pragma comment(lib, "gdiplus.lib")
@@ -53,6 +55,273 @@ static void EnsureGdiplusInit() {
     ULONG_PTR token = 0;
     Gdiplus::GdiplusStartup(&token, &input, nullptr);
   });
+}
+
+// Reads up to |max| bytes from the start of the file, or returns nullopt when
+// it can't be read (missing, a folder, locked…).
+static std::optional<std::vector<uint8_t>> ReadBytes(const std::wstring& path,
+                                                     size_t max = SIZE_MAX) {
+  // Share writes too, to read a log that its app keeps open.
+  HANDLE h = CreateFileW(path.c_str(), GENERIC_READ,
+                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h == INVALID_HANDLE_VALUE) return std::nullopt;
+  LARGE_INTEGER sz = {};
+  if (!GetFileSizeEx(h, &sz)) { CloseHandle(h); return std::nullopt; }
+  std::vector<uint8_t> buf(
+      std::min(static_cast<size_t>(sz.QuadPart), max));
+  size_t total = 0;
+  while (total < buf.size()) {
+    const DWORD want =
+        static_cast<DWORD>(std::min<size_t>(buf.size() - total, MAXDWORD));
+    DWORD got = 0;
+    if (!ReadFile(h, buf.data() + total, want, &got, nullptr) || got == 0) break;
+    total += got;
+  }
+  CloseHandle(h);
+  buf.resize(total);
+  return buf;
+}
+
+// ---------------------------------------------------------------------------
+// Images
+// ---------------------------------------------------------------------------
+
+struct WicImage {
+  ComPtr<IWICImagingFactory> factory;
+  ComPtr<IWICBitmapDecoder> decoder;
+  UINT pageCount = 1;
+};
+
+// Opens an image with WIC, or returns nullopt. Hold a ComScope.
+static std::optional<WicImage> OpenImage(const std::wstring& path) {
+  WicImage img;
+  if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                              CLSCTX_INPROC_SERVER,
+                              IID_PPV_ARGS(&img.factory))) ||
+      FAILED(img.factory->CreateDecoderFromFilename(
+          path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand,
+          &img.decoder)))
+    return std::nullopt;
+
+  // Only TIFF frames are pages. Other formats use frames for animation or
+  // icon sizes.
+  GUID format = {};
+  UINT frames = 0;
+  if (SUCCEEDED(img.decoder->GetContainerFormat(&format)) &&
+      format == GUID_ContainerFormatTiff &&
+      SUCCEEDED(img.decoder->GetFrameCount(&frames)) && frames > 1)
+    img.pageCount = frames;
+  return img;
+}
+
+// Returns the EXIF orientation (1 to 8), or 1 when there is none.
+static USHORT ReadOrientation(IWICBitmapFrameDecode* frame) {
+  ComPtr<IWICMetadataQueryReader> reader;
+  if (FAILED(frame->GetMetadataQueryReader(&reader))) return 1;
+  PROPVARIANT v;
+  PropVariantInit(&v);
+  USHORT orientation = 1;
+  if (SUCCEEDED(reader->GetMetadataByName(L"System.Photo.Orientation", &v)) &&
+      v.vt == VT_UI2)
+    orientation = v.uiVal;
+  PropVariantClear(&v);
+  return orientation;
+}
+
+// Returns the transform that turns an image with this EXIF orientation
+// upright.
+static Gdiplus::RotateFlipType UprightTransform(USHORT orientation) {
+  switch (orientation) {
+    case 2:  return Gdiplus::RotateNoneFlipX;
+    case 3:  return Gdiplus::Rotate180FlipNone;
+    case 4:  return Gdiplus::RotateNoneFlipY;
+    case 5:  return Gdiplus::Rotate90FlipX;
+    case 6:  return Gdiplus::Rotate90FlipNone;
+    case 7:  return Gdiplus::Rotate270FlipX;
+    case 8:  return Gdiplus::Rotate270FlipNone;
+    default: return Gdiplus::RotateNoneFlipNone;
+  }
+}
+
+// Decodes a page to an upright bitmap, or returns null.
+static std::unique_ptr<Gdiplus::Bitmap> DecodePage(const WicImage& img,
+                                                   UINT index) {
+  ComPtr<IWICBitmapFrameDecode> frame;
+  ComPtr<IWICFormatConverter> converter;
+  // WIC 32bppBGRA has the same memory layout as GDI+ 32bppARGB.
+  if (FAILED(img.decoder->GetFrame(index, &frame)) ||
+      FAILED(img.factory->CreateFormatConverter(&converter)) ||
+      FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA,
+                                   WICBitmapDitherTypeNone, nullptr, 0.0,
+                                   WICBitmapPaletteTypeCustom)))
+    return nullptr;
+
+  UINT w = 0, h = 0;
+  converter->GetSize(&w, &h);
+  if (w == 0 || h == 0) return nullptr;
+  auto bmp = std::make_unique<Gdiplus::Bitmap>(
+      static_cast<INT>(w), static_cast<INT>(h), PixelFormat32bppARGB);
+  if (bmp->GetLastStatus() != Gdiplus::Ok) return nullptr;
+
+  Gdiplus::Rect rect(0, 0, static_cast<INT>(w), static_cast<INT>(h));
+  Gdiplus::BitmapData data = {};
+  if (bmp->LockBits(&rect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB,
+                    &data) != Gdiplus::Ok)
+    return nullptr;
+  const HRESULT hr = converter->CopyPixels(
+      nullptr, static_cast<UINT>(data.Stride),
+      static_cast<UINT>(data.Stride) * h, static_cast<BYTE*>(data.Scan0));
+  bmp->UnlockBits(&data);
+  if (FAILED(hr)) return nullptr;
+
+  bmp->RotateFlip(UprightTransform(ReadOrientation(frame.Get())));
+  return bmp;
+}
+
+// True for an EMF header record or a placeable WMF key.
+static bool IsMetafile(const std::vector<uint8_t>& b) {
+  const auto u16 = [&](size_t i) { return uint32_t{b[i]} | uint32_t{b[i + 1]} << 8; };
+  const auto u32 = [&](size_t i) { return u16(i) | u16(i + 2) << 16; };
+  if (b.size() >= 44 && u32(0) == EMR_HEADER && u32(40) == ENHMETA_SIGNATURE)
+    return true;
+  // GDI+ can't open a WMF without the placeable header.
+  return b.size() >= 4 && u32(0) == 0x9AC6CDD7;
+}
+
+// Draws |img| fitted and centered in the printable area.
+static void DrawFitted(HDC hdc, Gdiplus::Image* img) {
+  const int pw = GetDeviceCaps(hdc, HORZRES);
+  const int ph = GetDeviceCaps(hdc, VERTRES);
+  const UINT iw = img->GetWidth(), ih = img->GetHeight();
+  if (iw == 0 || ih == 0) return;
+  const float s = std::min(static_cast<float>(pw) / iw,
+                           static_cast<float>(ph) / ih);
+  const int dw = static_cast<int>(iw * s);
+  const int dh = static_cast<int>(ih * s);
+  Gdiplus::Graphics g(hdc);
+  g.SetPageUnit(Gdiplus::UnitPixel);
+  g.DrawImage(img, (pw - dw) / 2, (ph - dh) / 2, dw, dh);
+}
+
+// Returns the CLSID of the GDI+ encoder for |mimeType|, e.g. L"image/png".
+static HRESULT GetEncoderClsid(const WCHAR* mimeType, CLSID* pClsid) {
+  UINT num = 0, size = 0;
+  Gdiplus::GetImageEncodersSize(&num, &size);
+  if (size == 0) return E_FAIL;
+
+  std::vector<BYTE> buf(size);
+  auto* codecs = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buf.data());
+  Gdiplus::GetImageEncoders(num, size, codecs);
+
+  for (UINT i = 0; i < num; ++i) {
+    if (wcscmp(codecs[i].MimeType, mimeType) == 0) {
+      *pClsid = codecs[i].Clsid;
+      return S_OK;
+    }
+  }
+  return E_FAIL;
+}
+
+static std::vector<uint8_t> EncodePng(Gdiplus::Bitmap& bmp) {
+  CLSID pngClsid;
+  ComPtr<IStream> stream;
+  if (FAILED(GetEncoderClsid(L"image/png", &pngClsid)) ||
+      FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream)) ||
+      bmp.Save(stream.Get(), &pngClsid, nullptr) != Gdiplus::Ok)
+    return {};
+
+  STATSTG stat = {};
+  if (FAILED(stream->Stat(&stat, STATFLAG_NONAME))) return {};
+  std::vector<uint8_t> png(static_cast<size_t>(stat.cbSize.QuadPart));
+  const LARGE_INTEGER zero = {};
+  ULONG read = 0;
+  stream->Seek(zero, STREAM_SEEK_SET, nullptr);
+  stream->Read(png.data(), static_cast<ULONG>(png.size()), &read);
+  png.resize(read);
+  return png;
+}
+
+// Draws |img| scaled by |scale| on white and encodes it as PNG.
+static std::vector<uint8_t> ImageToPng(Gdiplus::Image* img, double scale) {
+  const int w = std::max(1, static_cast<int>(img->GetWidth() * scale));
+  const int h = std::max(1, static_cast<int>(img->GetHeight() * scale));
+  Gdiplus::Bitmap out(w, h, PixelFormat32bppARGB);
+  if (out.GetLastStatus() != Gdiplus::Ok) return {};
+  {
+    Gdiplus::Graphics g(&out);
+    g.Clear(Gdiplus::Color(255, 255, 255));
+    g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    g.DrawImage(img, 0, 0, w, h);
+  }
+  return EncodePng(out);
+}
+
+// ---------------------------------------------------------------------------
+// File kinds
+// ---------------------------------------------------------------------------
+
+// True when |b| looks like text: a UTF-16 BOM, or no NUL and no control
+// characters other than tab, line breaks, form feed, escape and Ctrl+Z.
+static bool LooksLikeText(const std::vector<uint8_t>& b) {
+  if (b.size() >= 2 && ((b[0] == 0xFF && b[1] == 0xFE) ||
+                        (b[0] == 0xFE && b[1] == 0xFF)))
+    return true;
+  return std::all_of(b.begin(), b.end(), [](uint8_t c) {
+    return c >= 0x20 || c == '\t' || c == '\n' || c == '\r' || c == '\f' ||
+           c == 0x1A || c == 0x1B;
+  });
+}
+
+// True for text formats that another app must render: RTF, PostScript, MHTML,
+// and HTML or SVG markup. Printing their source is not what users want.
+static bool IsRichText(std::string_view text) {
+  const size_t start = text.find_first_not_of(" \t\r\n");
+  if (start == std::string_view::npos) return false;
+  text.remove_prefix(start);
+
+  for (std::string_view prefix : {"{\\rtf", "%!", "MIME-Version:"}) {
+    if (text.substr(0, prefix.size()) == prefix) return true;
+  }
+  if (text[0] != '<') return false;
+  std::string lower(text);
+  std::transform(lower.begin(), lower.end(), lower.begin(),
+                 [](char c) { return static_cast<char>(tolower(static_cast<unsigned char>(c))); });
+  for (std::string_view tag : {"<html", "<!doctype html", "<svg"}) {
+    if (lower.find(tag) != std::string::npos) return true;
+  }
+  return false;
+}
+
+static std::wstring DecodeTextBytes(const std::vector<uint8_t>& b);
+
+FileKind DetectFileKind(const std::wstring& path) {
+  const auto bytes = ReadBytes(path, 8192);
+  if (!bytes) return FileKind::kOther;
+  const std::vector<uint8_t>& head = *bytes;
+  const std::string_view text(reinterpret_cast<const char*>(head.data()),
+                              head.size());
+
+  // PDFium finds the header in the first 1 KB. Past the start, check that
+  // PDFium opens the file, as a text file can quote the header.
+  const size_t pdf = text.substr(0, 1024).find("%PDF-");
+  if (pdf == 0) return FileKind::kPdf;
+  if (pdf != std::string_view::npos) {
+    std::lock_guard<std::mutex> lock(g_pdfium_mtx);
+    if (OpenPdf(path)) return FileKind::kPdf;
+  }
+  if (IsMetafile(head)) return FileKind::kMetafile;
+
+  // Before WIC, which probes every decoder: bitmap headers are binary.
+  if (LooksLikeText(head)) {
+    // Decode first, to check UTF-16 files too.
+    return IsRichText(WideToUtf8(DecodeTextBytes(head).c_str()))
+               ? FileKind::kOther
+               : FileKind::kText;
+  }
+
+  ComScope com;
+  return OpenImage(path) ? FileKind::kImage : FileKind::kOther;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,108 +383,45 @@ static std::optional<FlutterError> PrintPages(HDC hdc,
   return std::nullopt;
 }
 
-// Decodes an image with WIC into a 32bpp GDI+ bitmap, for the formats GDI+
-// can't decode (WebP, HEIC…). |outPixels| backs |outBmp|: keep it alive longer.
-static std::optional<FlutterError> DecodeViaWIC(
-    const std::wstring& path, std::vector<BYTE>& outPixels,
-    std::unique_ptr<Gdiplus::Bitmap>& outBmp) {
-  // Declared first, so it uninitializes COM after the pointers below release.
-  struct ComScope {
-    bool ok;
-    ~ComScope() { if (ok) CoUninitialize(); }
-  } com{SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))};
-
-  ComPtr<IWICImagingFactory> factory;
-  if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
-                              CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))))
-    return FlutterError("IMAGE_ERROR", "WIC not available on this system");
-
-  ComPtr<IWICBitmapDecoder> decoder;
-  if (FAILED(factory->CreateDecoderFromFilename(
-          path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad,
-          &decoder)))
-    return FlutterError("IMAGE_ERROR",
-                        "WIC codec not installed for: " +
-                            WideToUtf8(path.c_str()));
-
-  ComPtr<IWICBitmapFrameDecode> frame;
-  if (FAILED(decoder->GetFrame(0, &frame)))
-    return FlutterError("IMAGE_ERROR", "WIC frame decode failed");
-
-  // WIC 32bppBGRA has the same memory layout as GDI+ 32bppARGB.
-  ComPtr<IWICFormatConverter> converter;
-  if (FAILED(factory->CreateFormatConverter(&converter)) ||
-      FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA,
-                                   WICBitmapDitherTypeNone, nullptr, 0.0,
-                                   WICBitmapPaletteTypeCustom)))
-    return FlutterError("IMAGE_ERROR", "WIC format conversion failed");
-
-  UINT iw = 0, ih = 0;
-  converter->GetSize(&iw, &ih);
-  if (iw == 0 || ih == 0)
-    return FlutterError("IMAGE_ERROR", "WIC returned empty image");
-
-  outPixels.resize(static_cast<size_t>(iw) * ih * 4);
-  if (FAILED(converter->CopyPixels(nullptr, iw * 4,
-                                   static_cast<UINT>(outPixels.size()),
-                                   outPixels.data())))
-    return FlutterError("IMAGE_ERROR", "WIC pixel copy failed");
-
-  outBmp = std::make_unique<Gdiplus::Bitmap>(
-      static_cast<INT>(iw), static_cast<INT>(ih), static_cast<INT>(iw) * 4,
-      PixelFormat32bppARGB, outPixels.data());
-  return std::nullopt;
-}
-
-// Returns the CLSID of the GDI+ encoder for |mimeType|, e.g. L"image/png".
-static HRESULT GetEncoderClsid(const WCHAR* mimeType, CLSID* pClsid) {
-  UINT num = 0, size = 0;
-  Gdiplus::GetImageEncodersSize(&num, &size);
-  if (size == 0) return E_FAIL;
-
-  std::vector<BYTE> buf(size);
-  auto* codecs = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buf.data());
-  Gdiplus::GetImageEncoders(num, size, codecs);
-
-  for (UINT i = 0; i < num; ++i) {
-    if (wcscmp(codecs[i].MimeType, mimeType) == 0) {
-      *pClsid = codecs[i].Clsid;
-      return S_OK;
-    }
-  }
-  return E_FAIL;
-}
-
-// Prints an image fitted and centered in the printable area.
+// Prints each page fitted and centered in the printable area.
 static std::optional<FlutterError> RenderImageToDC(HDC hdc,
                                                    const std::wstring& path,
                                                    int copies,
                                                    const PageRanges& ranges) {
   EnsureGdiplusInit();
+  ComScope com;
+  const auto error = [&] {
+    return FlutterError("IMAGE_ERROR",
+                        "Cannot decode image: " + WideToUtf8(path.c_str()));
+  };
+  auto img = OpenImage(path);
+  if (!img) return error();
 
-  Gdiplus::Image gdiImg(path.c_str());
-  std::vector<BYTE> wicPixels;  // Backs wicBmp.
-  std::unique_ptr<Gdiplus::Bitmap> wicBmp;
-  Gdiplus::Image* img = &gdiImg;
-  if (gdiImg.GetLastStatus() != Gdiplus::Ok) {
-    if (auto err = DecodeViaWIC(path, wicPixels, wicBmp)) return err;
-    img = wicBmp.get();
-  }
+  // Decode a single page once, and fail before the job starts.
+  std::unique_ptr<Gdiplus::Bitmap> single;
+  if (img->pageCount == 1 && !(single = DecodePage(*img, 0))) return error();
 
-  const int pw = GetDeviceCaps(hdc, HORZRES);
-  const int ph = GetDeviceCaps(hdc, VERTRES);
-  const UINT iw = img->GetWidth(), ih = img->GetHeight();
-  const float s = std::min(static_cast<float>(pw) / iw,
-                           static_cast<float>(ph) / ih);
-  const int dw = static_cast<int>(iw * s);
-  const int dh = static_cast<int>(ih * s);
-  const int dx = (pw - dw) / 2;
-  const int dy = (ph - dh) / 2;
+  return PrintPages(hdc, path, static_cast<int>(img->pageCount), copies, ranges,
+                    [&](int i) {
+                      auto bmp = single ? nullptr : DecodePage(*img, i);
+                      Gdiplus::Bitmap* page = single ? single.get() : bmp.get();
+                      if (!page) return false;
+                      DrawFitted(hdc, page);
+                      return true;
+                    });
+}
 
+static std::optional<FlutterError> RenderMetafileToDC(HDC hdc,
+                                                      const std::wstring& path,
+                                                      int copies,
+                                                      const PageRanges& ranges) {
+  EnsureGdiplusInit();
+  Gdiplus::Metafile metafile(path.c_str());
+  if (metafile.GetLastStatus() != Gdiplus::Ok)
+    return FlutterError("IMAGE_ERROR",
+                        "Cannot open metafile: " + WideToUtf8(path.c_str()));
   return PrintPages(hdc, path, 1, copies, ranges, [&](int) {
-    Gdiplus::Graphics g(hdc);
-    g.SetPageUnit(Gdiplus::UnitPixel);
-    g.DrawImage(img, dx, dy, dw, dh);
+    DrawFitted(hdc, &metafile);
     return true;
   });
 }
@@ -255,26 +461,6 @@ static std::optional<FlutterError> RenderPdfToDC(HDC hdc,
       });
 }
 
-static std::vector<uint8_t> ReadAllBytes(const std::wstring& path) {
-  HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
-                         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (h == INVALID_HANDLE_VALUE) return {};
-  LARGE_INTEGER sz = {};
-  if (!GetFileSizeEx(h, &sz) || sz.QuadPart == 0) { CloseHandle(h); return {}; }
-  std::vector<uint8_t> buf(static_cast<size_t>(sz.QuadPart));
-  size_t total = 0;
-  while (total < buf.size()) {
-    const DWORD want =
-        static_cast<DWORD>(std::min<size_t>(buf.size() - total, MAXDWORD));
-    DWORD got = 0;
-    if (!ReadFile(h, buf.data() + total, want, &got, nullptr) || got == 0) break;
-    total += got;
-  }
-  CloseHandle(h);
-  buf.resize(total);
-  return buf;
-}
-
 // Decodes UTF-16 LE/BE (with BOM), UTF-8 (with or without BOM), else ANSI.
 static std::wstring DecodeTextBytes(const std::vector<uint8_t>& b) {
   const size_t n = b.size();
@@ -312,7 +498,8 @@ static std::wstring DecodeTextBytes(const std::vector<uint8_t>& b) {
 }
 
 std::wstring ReadTextFile(const std::wstring& path) {
-  return DecodeTextBytes(ReadAllBytes(path));
+  const auto bytes = ReadBytes(path);
+  return bytes ? DecodeTextBytes(*bytes) : std::wstring{};
 }
 
 // Prints a text file in 10 pt Consolas with 1-inch margins, wrapping long
@@ -321,7 +508,11 @@ static std::optional<FlutterError> RenderTextToDC(HDC hdc,
                                                   const std::wstring& path,
                                                   int copies,
                                                   const PageRanges& ranges) {
-  const std::wstring text = ReadTextFile(path);
+  const auto bytes = ReadBytes(path);
+  if (!bytes)
+    return FlutterError("FILE_ERROR",
+                        "Cannot read file: " + WideToUtf8(path.c_str()));
+  const std::wstring text = DecodeTextBytes(*bytes);
 
   const int dpiX     = GetDeviceCaps(hdc, LOGPIXELSX);
   const int dpiY     = GetDeviceCaps(hdc, LOGPIXELSY);
@@ -412,11 +603,16 @@ static std::optional<FlutterError> RenderTextToDC(HDC hdc,
 }
 
 std::optional<FlutterError> RenderToDC(HDC hdc, const std::wstring& wPath,
-                                       const std::string& mime, int copies,
+                                       FileKind kind, int copies,
                                        const PageRanges& ranges) {
-  if (mime == "application/pdf") return RenderPdfToDC(hdc, wPath, copies, ranges);
-  if (mime.rfind("text/", 0) == 0) return RenderTextToDC(hdc, wPath, copies, ranges);
-  return RenderImageToDC(hdc, wPath, copies, ranges);
+  switch (kind) {
+    case FileKind::kPdf:      return RenderPdfToDC(hdc, wPath, copies, ranges);
+    case FileKind::kImage:    return RenderImageToDC(hdc, wPath, copies, ranges);
+    case FileKind::kMetafile: return RenderMetafileToDC(hdc, wPath, copies, ranges);
+    case FileKind::kText:     return RenderTextToDC(hdc, wPath, copies, ranges);
+    case FileKind::kOther:    break;
+  }
+  return FlutterError("UNSUPPORTED_FILE", "File type not supported for printing");
 }
 
 std::optional<FlutterError> ShellPrint(const std::wstring& wPath,
@@ -459,16 +655,27 @@ std::optional<FlutterError> ShellPrint(const std::wstring& wPath,
 // Preview rendering
 // ---------------------------------------------------------------------------
 
-int GetPdfPageCount(const std::wstring& path) {
-  std::lock_guard<std::mutex> lock(g_pdfium_mtx);
-  auto doc = OpenPdf(path);
-  return doc ? FPDF_GetPageCount(doc.get()) : 0;
+int GetPageCount(const std::wstring& path, FileKind kind) {
+  switch (kind) {
+    case FileKind::kPdf: {
+      std::lock_guard<std::mutex> lock(g_pdfium_mtx);
+      auto doc = OpenPdf(path);
+      return doc ? FPDF_GetPageCount(doc.get()) : 0;
+    }
+    case FileKind::kImage: {
+      ComScope com;
+      auto img = OpenImage(path);
+      return img ? static_cast<int>(img->pageCount) : 0;
+    }
+    case FileKind::kMetafile:
+      return 1;
+    default:
+      return 0;
+  }
 }
 
-std::vector<uint8_t> RenderPdfPageToPng(const std::wstring& path,
-                                         int pageIndex,
-                                         double dpi) {
-  EnsureGdiplusInit();
+static std::vector<uint8_t> RenderPdfPageToPng(const std::wstring& path,
+                                               int pageIndex, double dpi) {
   std::lock_guard<std::mutex> lock(g_pdfium_mtx);
   auto doc = OpenPdf(path);
   if (!doc) return {};
@@ -488,22 +695,37 @@ std::vector<uint8_t> RenderPdfPageToPng(const std::wstring& path,
   Gdiplus::Bitmap gdiBmp(w, h, FPDFBitmap_GetStride(bitmap.get()),
                          PixelFormat32bppARGB,
                          static_cast<BYTE*>(FPDFBitmap_GetBuffer(bitmap.get())));
-  CLSID pngClsid;
-  ComPtr<IStream> stream;
-  if (FAILED(GetEncoderClsid(L"image/png", &pngClsid)) ||
-      FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream)) ||
-      gdiBmp.Save(stream.Get(), &pngClsid, nullptr) != Gdiplus::Ok)
-    return {};
+  return EncodePng(gdiBmp);
+}
 
-  STATSTG stat = {};
-  if (FAILED(stream->Stat(&stat, STATFLAG_NONAME))) return {};
-  std::vector<uint8_t> png(static_cast<size_t>(stat.cbSize.QuadPart));
-  const LARGE_INTEGER zero = {};
-  ULONG read = 0;
-  stream->Seek(zero, STREAM_SEEK_SET, nullptr);
-  stream->Read(png.data(), static_cast<ULONG>(png.size()), &read);
-  png.resize(read);
-  return png;
+std::vector<uint8_t> RenderPageToPng(const std::wstring& path, FileKind kind,
+                                     int pageIndex, double dpi) {
+  EnsureGdiplusInit();
+  const double maxSide = 12 * dpi;
+  const auto fitScale = [&](Gdiplus::Image& img) {
+    return maxSide / std::max({img.GetWidth(), img.GetHeight(), 1u});
+  };
+
+  switch (kind) {
+    case FileKind::kPdf:
+      return RenderPdfPageToPng(path, pageIndex, dpi);
+    case FileKind::kImage: {
+      ComScope com;
+      auto img = OpenImage(path);
+      if (!img || pageIndex < 0) return {};
+      auto bmp = DecodePage(*img, static_cast<UINT>(pageIndex));
+      // Never enlarge a bitmap.
+      return bmp ? ImageToPng(bmp.get(), std::min(1.0, fitScale(*bmp)))
+                 : std::vector<uint8_t>{};
+    }
+    case FileKind::kMetafile: {
+      Gdiplus::Metafile metafile(path.c_str());
+      if (metafile.GetLastStatus() != Gdiplus::Ok) return {};
+      return ImageToPng(&metafile, fitScale(metafile));
+    }
+    default:
+      return {};
+  }
 }
 
 }  // namespace flutter_print

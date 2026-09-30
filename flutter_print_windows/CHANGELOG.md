@@ -3,6 +3,11 @@
 * feat: Add Pages selector to the print dialog.
 * feat: Fail with INVALID_PAGE_RANGE when no page matches.
 * fix: Report print errors from printPreview.
+* feat: Detect the file type from its content. Print any text file (csv, json, md, log, code…) as text.
+* feat: Print images with any installed WIC codec (HEIC, AVIF, JPEG XL, RAW…), all TIFF pages, and EXIF orientation.
+* feat: Print EMF and WMF files as vectors.
+* feat: Preview images, TIFF pages and metafiles in the print dialog.
+* fix: Open HTML, SVG and RTF files in their default app instead of printing their source.
 
 ## 0.2.0
 * feat: Make print options nullable to get system defaults.

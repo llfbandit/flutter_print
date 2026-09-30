@@ -26,13 +26,13 @@ class PrintPreviewPanel extends StatefulWidget {
   const PrintPreviewPanel({
     super.key,
     required this.filePath,
-    required this.mimeType,
+    required this.kind,
     required this.pageCount,
     required this.options,
   });
 
   final String filePath;
-  final String mimeType;
+  final FileKind kind;
 
   /// Null while loading, 0 when unknown.
   final int? pageCount;
@@ -93,23 +93,20 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
       minimumMargins: _minimumMargins,
       child: child,
     );
-    final color = widget.options.color ?? true;
-    final mime = widget.mimeType;
-
-    if (mimeIsPdf(mime)) {
-      return _PrintPdfPreview(
-        filePath: widget.filePath,
-        pageCount: widget.pageCount,
-        color: color,
-        pageRanges: widget.options.pageRanges,
-        paper: paper,
-      );
+    if (widget.kind == FileKind.text) {
+      return paper(_PrintTextPreview(filePath: widget.filePath));
     }
-    if (mimeIsImage(mime)) {
-      return paper(_PrintImagePreview(filePath: widget.filePath, color: color));
-    }
-    // The dialog only opens for PDF, image and text files.
-    return paper(_PrintTextPreview(filePath: widget.filePath));
+    return _PagedPreview(
+      filePath: widget.filePath,
+      pageCount: widget.pageCount,
+      color: widget.options.color ?? true,
+      pageRanges: widget.options.pageRanges,
+      // Print draws PDF pages from the sheet corner, and centers images.
+      alignment: widget.kind == FileKind.pdf
+          ? Alignment.topLeft
+          : Alignment.center,
+      paper: paper,
+    );
   }
 }
 
@@ -167,15 +164,17 @@ class _PaperShell extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// PDF preview
+// PDF and image preview
 // ---------------------------------------------------------------------------
 
-class _PrintPdfPreview extends StatefulWidget {
-  const _PrintPdfPreview({
+/// Shows the pages the plugin renders, one at a time.
+class _PagedPreview extends StatefulWidget {
+  const _PagedPreview({
     required this.filePath,
     required this.pageCount,
     required this.color,
     required this.pageRanges,
+    required this.alignment,
     required this.paper,
   });
 
@@ -183,13 +182,14 @@ class _PrintPdfPreview extends StatefulWidget {
   final int? pageCount;
   final bool color;
   final List<PageRange>? pageRanges;
+  final Alignment alignment;
   final Widget Function(Widget page) paper;
 
   @override
-  State<_PrintPdfPreview> createState() => _PrintPdfPreviewState();
+  State<_PagedPreview> createState() => _PagedPreviewState();
 }
 
-class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
+class _PagedPreviewState extends State<_PagedPreview> {
   Uint8List? _previewImg;
 
   /// 0-based indices of the pages to print. Empty until the page count is
@@ -213,7 +213,7 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
   }
 
   @override
-  void didUpdateWidget(_PrintPdfPreview old) {
+  void didUpdateWidget(_PagedPreview old) {
     super.didUpdateWidget(old);
     if (old.filePath != widget.filePath) {
       _pos = 0;
@@ -265,7 +265,7 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
   Future<void> _render(int request, int page) async {
     Uint8List? img;
     try {
-      img = await WindowsPrintChannel.renderPdfPageToPng(
+      img = await WindowsPrintChannel.renderPageToPng(
         widget.filePath,
         page,
         150.0,
@@ -298,7 +298,7 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
       Widget img = Image.memory(
         _previewImg!,
         fit: BoxFit.contain,
-        alignment: Alignment.topLeft,
+        alignment: widget.alignment,
       );
       if (!widget.color) {
         img = ColorFiltered(colorFilter: _grayscaleFilter, child: img);
@@ -344,30 +344,6 @@ class _PrintPdfPreviewState extends State<_PrintPdfPreview> {
           ),
       ],
     );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Image preview
-// ---------------------------------------------------------------------------
-
-class _PrintImagePreview extends StatelessWidget {
-  const _PrintImagePreview({required this.filePath, required this.color});
-
-  final String filePath;
-  final bool color;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = PrintLocalizations.of(context);
-    final img = Image.file(
-      File(filePath),
-      fit: BoxFit.contain,
-      errorBuilder: (_, _, _) => Center(child: Text(l10n.previewUnavailable)),
-    );
-    return color
-        ? img
-        : ColorFiltered(colorFilter: _grayscaleFilter, child: img);
   }
 }
 

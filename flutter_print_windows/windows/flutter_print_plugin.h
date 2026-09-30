@@ -47,9 +47,9 @@ class FlutterPrintPlugin : public flutter::Plugin, public FlutterPrintApi {
   void HandleWindowsMethod(
       const flutter::MethodCall<flutter::EncodableValue>& call,
       WinResult result);
-  void HandleGetMimeType(const flutter::EncodableMap& args, WinResult result);
-  void HandleGetPdfPageCount(const flutter::EncodableMap& args, WinResult result);
-  void HandleRenderPdfPageToPng(const flutter::EncodableMap& args, WinResult result);
+  void HandleGetFileKind(const flutter::EncodableMap& args, WinResult result);
+  void HandleGetPageCount(const flutter::EncodableMap& args, WinResult result);
+  void HandleRenderPageToPng(const flutter::EncodableMap& args, WinResult result);
   void HandleDecodeTextFile(const flutter::EncodableMap& args, WinResult result);
   void HandleGetMinimumMargins(const flutter::EncodableMap& args, WinResult result);
   void HandleOpenInDefaultApp(const flutter::EncodableMap& args, WinResult result);

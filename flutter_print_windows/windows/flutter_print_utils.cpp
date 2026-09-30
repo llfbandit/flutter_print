@@ -1,11 +1,9 @@
 #include "flutter_print_utils.h"
 
-#include <urlmon.h>
 #include <winspool.h>
 
 #include <iterator>
 
-#pragma comment(lib, "urlmon.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "winspool.lib")
 
@@ -27,32 +25,6 @@ std::string WideToUtf8(const WCHAR* w) {
   std::string s(n - 1, '\0');
   WideCharToMultiByte(CP_UTF8, 0, w, -1, &s[0], n, nullptr, nullptr);
   return s;
-}
-
-std::string GetMimeType(const std::wstring& path) {
-  BYTE header[256] = {};
-  DWORD bytesRead = 0;
-  HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
-                             nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
-                             nullptr);
-  if (hFile != INVALID_HANDLE_VALUE) {
-    ReadFile(hFile, header, sizeof(header), &bytesRead, nullptr);
-    CloseHandle(hFile);
-  }
-
-  LPWSTR mimeW = nullptr;
-  HRESULT hr = FindMimeFromData(nullptr, path.c_str(),
-                                bytesRead > 0 ? header : nullptr, bytesRead,
-                                nullptr, FMFD_DEFAULT, &mimeW, 0);
-  if (FAILED(hr) || !mimeW) return "application/octet-stream";
-  std::string mime = WideToUtf8(mimeW);
-  CoTaskMemFree(mimeW);
-  return mime;
-}
-
-bool IsRenderableMime(const std::string& mime) {
-  return mime.rfind("image/", 0) == 0 || mime == "application/pdf" ||
-         mime.rfind("text/", 0) == 0;
 }
 
 std::wstring DefaultPrinterName() {

@@ -10,6 +10,7 @@
 * fix(ios): Reject a print job while another one runs, instead of changing the open dialog.
 * fix(ios): Present from the Flutter view, and anchor the iPad popover to its centre.
 * fix(ios): Fail with `PRINTER_ERROR` for an invalid or unreachable `printerAddress`.
+* feat(windows): Detect file types by content. Print all text files, WIC images (HEIC, AVIF, JPEG XL…), all TIFF pages, and EMF/WMF files, with all options.
 * feat(ios): Use photo output for images.
 * feat(ios): Report availability, colour and duplex support of the printer from `pickPrinter`.
 

@@ -32,9 +32,8 @@ String formatPageRanges(List<PageRange> ranges) => ranges
     .map((r) => r.start == r.end ? '${r.start}' : '${r.start}-${r.end}')
     .join(', ');
 
-bool mimeIsPdf(String mime) => mime == 'application/pdf';
-bool mimeIsImage(String mime) => mime.startsWith('image/');
-bool mimeIsText(String mime) => mime.startsWith('text/');
+/// How the plugin prints a file. It opens [other] files in their default app.
+enum FileKind { pdf, image, text, other }
 
 /// Paper sizes offered by the dialog, in menu order: name → (width, height)
 /// in portrait millimetres.

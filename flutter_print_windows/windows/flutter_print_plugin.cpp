@@ -199,8 +199,8 @@ std::optional<FlutterError> FlutterPrintPlugin::PrintInternal(
   std::wstring wPrinter = (pn && !pn->empty()) ? Utf8ToWide(*pn) : std::wstring{};
 
   // Other file types go to their default app.
-  const std::string mime = GetMimeType(wPath);
-  if (!IsRenderableMime(mime)) return ShellPrint(wPath, wPrinter);
+  const FileKind kind = DetectFileKind(wPath);
+  if (kind == FileKind::kOther) return ShellPrint(wPath, wPrinter);
 
   if (wPrinter.empty()) wPrinter = DefaultPrinterName();
   if (wPrinter.empty())
@@ -213,7 +213,7 @@ std::optional<FlutterError> FlutterPrintPlugin::PrintInternal(
     return FlutterError("PRINTER_ERROR",
                         "Cannot create printer DC for: " +
                             WideToUtf8(wPrinter.c_str()));
-  auto err = RenderToDC(hdc, wPath, mime, softwareCopies,
+  auto err = RenderToDC(hdc, wPath, kind, softwareCopies,
                         ExtractPageRanges(options));
   DeleteDC(hdc);
   return err;
@@ -268,34 +268,41 @@ void FlutterPrintPlugin::HandleWindowsMethod(
   if (!args) { result->Error("INVALID_ARGS", "Expected map"); return; }
 
   const std::string& method = call.method_name();
-  if (method == "getMimeType")        return HandleGetMimeType(*args, std::move(result));
-  if (method == "getPdfPageCount")    return HandleGetPdfPageCount(*args, std::move(result));
-  if (method == "renderPdfPageToPng") return HandleRenderPdfPageToPng(*args, std::move(result));
+  if (method == "getFileKind")        return HandleGetFileKind(*args, std::move(result));
+  if (method == "getPageCount")       return HandleGetPageCount(*args, std::move(result));
+  if (method == "renderPageToPng")    return HandleRenderPageToPng(*args, std::move(result));
   if (method == "decodeTextFile")     return HandleDecodeTextFile(*args, std::move(result));
   if (method == "getMinimumMargins")  return HandleGetMinimumMargins(*args, std::move(result));
   if (method == "openInDefaultApp")   return HandleOpenInDefaultApp(*args, std::move(result));
   result->NotImplemented();
 }
 
-void FlutterPrintPlugin::HandleGetMimeType(const flutter::EncodableMap& args,
+void FlutterPrintPlugin::HandleGetFileKind(const flutter::EncodableMap& args,
                                            WinResult result) {
   auto wPath = GetFilePathArg(args, *result);
   if (!wPath) return;
   ReplyAsync(alive_, std::move(result), [wPath = std::move(*wPath)] {
-    return flutter::EncodableValue(GetMimeType(wPath));
+    // Dart previews metafiles like images.
+    switch (DetectFileKind(wPath)) {
+      case FileKind::kPdf:      return flutter::EncodableValue("pdf");
+      case FileKind::kImage:
+      case FileKind::kMetafile: return flutter::EncodableValue("image");
+      case FileKind::kText:     return flutter::EncodableValue("text");
+      default:                  return flutter::EncodableValue("other");
+    }
   });
 }
 
-void FlutterPrintPlugin::HandleGetPdfPageCount(const flutter::EncodableMap& args,
-                                               WinResult result) {
+void FlutterPrintPlugin::HandleGetPageCount(const flutter::EncodableMap& args,
+                                            WinResult result) {
   auto wPath = GetFilePathArg(args, *result);
   if (!wPath) return;
   ReplyAsync(alive_, std::move(result), [wPath = std::move(*wPath)] {
-    return flutter::EncodableValue(GetPdfPageCount(wPath));
+    return flutter::EncodableValue(GetPageCount(wPath, DetectFileKind(wPath)));
   });
 }
 
-void FlutterPrintPlugin::HandleRenderPdfPageToPng(
+void FlutterPrintPlugin::HandleRenderPageToPng(
     const flutter::EncodableMap& args, WinResult result) {
   auto wPath = GetFilePathArg(args, *result);
   if (!wPath) return;
@@ -304,7 +311,8 @@ void FlutterPrintPlugin::HandleRenderPdfPageToPng(
   ReplyAsync(alive_, std::move(result),
              [wPath = std::move(*wPath), pageIndex = pageIndex ? *pageIndex : 0,
               dpi = dpi ? *dpi : 150.0] {
-               auto png = RenderPdfPageToPng(wPath, pageIndex, dpi);
+               auto png = RenderPageToPng(wPath, DetectFileKind(wPath),
+                                          pageIndex, dpi);
                return png.empty() ? flutter::EncodableValue()
                                   : flutter::EncodableValue(std::move(png));
              });

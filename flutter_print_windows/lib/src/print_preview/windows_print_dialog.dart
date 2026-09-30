@@ -13,10 +13,10 @@ Future<void> showWindowsPrintDialog(
   String filePath,
   PrintOptions? initialOptions,
 ) async {
-  // The dialog previews PDF, image and text files only. Open other files in
-  // their default app, which has its own print flow.
-  final mime = await WindowsPrintChannel.getMimeType(filePath);
-  if (!mimeIsPdf(mime) && !mimeIsImage(mime) && !mimeIsText(mime)) {
+  // Open the files the plugin can't print in their default app, which has its
+  // own print flow.
+  final kind = await WindowsPrintChannel.getFileKind(filePath);
+  if (kind == FileKind.other) {
     await WindowsPrintChannel.openInDefaultApp(filePath);
     return;
   }
@@ -52,7 +52,7 @@ Future<void> showWindowsPrintDialog(
             reverseTransitionDuration: Duration.zero,
             pageBuilder: (_, _, _) => _PrintDialog(
               filePath: filePath,
-              mimeType: mime,
+              kind: kind,
               initialOptions: initialOptions,
             ),
           ),
@@ -82,12 +82,12 @@ FluentThemeData _buildTheme(Brightness brightness) {
 class _PrintDialog extends StatefulWidget {
   const _PrintDialog({
     required this.filePath,
-    required this.mimeType,
+    required this.kind,
     this.initialOptions,
   });
 
   final String filePath;
-  final String mimeType;
+  final FileKind kind;
   final PrintOptions? initialOptions;
 
   @override
@@ -112,17 +112,17 @@ class _PrintDialogState extends State<_PrintDialog> {
     super.initState();
     _options = widget.initialOptions ?? PrintOptions();
     _pagesValid = _options.pageRanges?.isEmpty ?? true;
-    if (mimeIsPdf(widget.mimeType)) {
-      _loadPageCount();
+    if (widget.kind == FileKind.text) {
+      _pageCount = 0;
     } else {
-      _pageCount = mimeIsImage(widget.mimeType) ? 1 : 0;
+      _loadPageCount();
     }
   }
 
   Future<void> _loadPageCount() async {
     var count = 0;
     try {
-      count = await WindowsPrintChannel.getPdfPageCount(widget.filePath);
+      count = await WindowsPrintChannel.getPageCount(widget.filePath);
     } catch (_) {
       // Show the preview as unavailable.
     }
@@ -165,7 +165,7 @@ class _PrintDialogState extends State<_PrintDialog> {
             Expanded(
               child: PrintPreviewPanel(
                 filePath: widget.filePath,
-                mimeType: widget.mimeType,
+                kind: widget.kind,
                 pageCount: _pageCount,
                 options: _options,
               ),

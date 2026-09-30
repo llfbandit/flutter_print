@@ -1,30 +1,35 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_print_platform_interface/flutter_print_platform_interface.dart';
 
+import 'print_preview/print_dialog_utils.dart';
+
 class WindowsPrintChannel {
   static const _channel = MethodChannel('flutter_print_windows');
 
-  static Future<Uint8List?> renderPdfPageToPng(
+  static Future<FileKind> getFileKind(String filePath) async {
+    final name = await _channel.invokeMethod<String>('getFileKind', {
+      'filePath': filePath,
+    });
+    return FileKind.values.asNameMap()[name] ?? FileKind.other;
+  }
+
+  /// Returns the page count of a PDF or image, or 0 on error.
+  static Future<int> getPageCount(String filePath) async =>
+      await _channel.invokeMethod<int>('getPageCount', {
+        'filePath': filePath,
+      }) ??
+      0;
+
+  /// Renders a page (0-based) of a PDF or image to PNG, or returns null.
+  static Future<Uint8List?> renderPageToPng(
     String filePath,
     int pageIndex,
     double dpi,
-  ) => _channel.invokeMethod<Uint8List>('renderPdfPageToPng', {
+  ) => _channel.invokeMethod<Uint8List>('renderPageToPng', {
     'filePath': filePath,
     'pageIndex': pageIndex,
     'dpi': dpi,
   });
-
-  static Future<String> getMimeType(String filePath) async =>
-      await _channel.invokeMethod<String>('getMimeType', {
-        'filePath': filePath,
-      }) ??
-      'application/octet-stream';
-
-  static Future<int> getPdfPageCount(String filePath) async =>
-      await _channel.invokeMethod<int>('getPdfPageCount', {
-        'filePath': filePath,
-      }) ??
-      0;
 
   static Future<String?> decodeTextFile(String filePath) =>
       _channel.invokeMethod<String>('decodeTextFile', {'filePath': filePath});
