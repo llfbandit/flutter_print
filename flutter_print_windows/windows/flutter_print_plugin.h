@@ -16,6 +16,9 @@
 
 namespace flutter_print {
 
+using WinResult =
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>;
+
 class FlutterPrintPlugin : public flutter::Plugin, public FlutterPrintApi {
  public:
   static void RegisterWithRegistrar(flutter::PluginRegistrarWindows* registrar);
@@ -37,9 +40,6 @@ class FlutterPrintPlugin : public flutter::Plugin, public FlutterPrintApi {
       std::function<void(ErrorOr<flutter::EncodableList>)> result) override;
 
  private:
-  using WinResult =
-      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>;
-
   std::optional<FlutterError> PrintInternal(const std::string& file_path,
                                             const PrintOptions* options);
 

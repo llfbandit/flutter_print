@@ -3,7 +3,6 @@
 #include "flutter_print_utils.h"
 
 #include <gdiplus.h>
-#include <shellapi.h>
 #include <wincodec.h>
 #include <wrl/client.h>
 
@@ -15,9 +14,6 @@
 #include <string_view>
 #include <type_traits>
 
-#pragma comment(lib, "gdiplus.lib")
-#pragma comment(lib, "windowscodecs.lib")
-#pragma comment(lib, "ole32.lib")
 
 namespace flutter_print {
 
@@ -144,22 +140,37 @@ static Gdiplus::RotateFlipType UprightTransform(USHORT orientation) {
   }
 }
 
-// Decodes a page to an upright bitmap, or returns null.
+// Decodes a page to an upright bitmap, or returns null. A non-zero |maxSide|
+// shrinks the page to fit it while decoding.
 static std::unique_ptr<Gdiplus::Bitmap> DecodePage(const WicImage& img,
-                                                   UINT index) {
+                                                   UINT index,
+                                                   UINT maxSide = 0) {
   ComPtr<IWICBitmapFrameDecode> frame;
-  ComPtr<IWICFormatConverter> converter;
-  // WIC 32bppBGRA has the same memory layout as GDI+ 32bppARGB.
+  UINT w = 0, h = 0;
   if (FAILED(img.decoder->GetFrame(index, &frame)) ||
-      FAILED(img.factory->CreateFormatConverter(&converter)) ||
-      FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA,
+      FAILED(frame->GetSize(&w, &h)) || w == 0 || h == 0)
+    return nullptr;
+
+  ComPtr<IWICBitmapSource> source = frame;
+  if (maxSide > 0 && std::max(w, h) > maxSide) {
+    const double s = static_cast<double>(maxSide) / std::max(w, h);
+    w = std::max(1u, static_cast<UINT>(w * s));
+    h = std::max(1u, static_cast<UINT>(h * s));
+    ComPtr<IWICBitmapScaler> scaler;
+    if (FAILED(img.factory->CreateBitmapScaler(&scaler)) ||
+        FAILED(scaler->Initialize(frame.Get(), w, h,
+                                  WICBitmapInterpolationModeFant)))
+      return nullptr;
+    source = scaler;
+  }
+
+  // WIC 32bppBGRA has the same memory layout as GDI+ 32bppARGB.
+  ComPtr<IWICFormatConverter> converter;
+  if (FAILED(img.factory->CreateFormatConverter(&converter)) ||
+      FAILED(converter->Initialize(source.Get(), GUID_WICPixelFormat32bppBGRA,
                                    WICBitmapDitherTypeNone, nullptr, 0.0,
                                    WICBitmapPaletteTypeCustom)))
     return nullptr;
-
-  UINT w = 0, h = 0;
-  converter->GetSize(&w, &h);
-  if (w == 0 || h == 0) return nullptr;
   auto bmp = std::make_unique<Gdiplus::Bitmap>(
       static_cast<INT>(w), static_cast<INT>(h), PixelFormat32bppARGB);
   if (bmp->GetLastStatus() != Gdiplus::Ok) return nullptr;
@@ -224,11 +235,15 @@ static HRESULT GetEncoderClsid(const WCHAR* mimeType, CLSID* pClsid) {
 }
 
 static std::vector<uint8_t> EncodePng(Gdiplus::Bitmap& bmp) {
-  CLSID pngClsid;
+  static const std::optional<CLSID> pngClsid = []() -> std::optional<CLSID> {
+    CLSID clsid;
+    if (FAILED(GetEncoderClsid(L"image/png", &clsid))) return std::nullopt;
+    return clsid;
+  }();
   ComPtr<IStream> stream;
-  if (FAILED(GetEncoderClsid(L"image/png", &pngClsid)) ||
+  if (!pngClsid ||
       FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream)) ||
-      bmp.Save(stream.Get(), &pngClsid, nullptr) != Gdiplus::Ok)
+      bmp.Save(stream.Get(), &*pngClsid, nullptr) != Gdiplus::Ok)
     return {};
 
   STATSTG stat = {};
@@ -390,23 +405,22 @@ static std::optional<FlutterError> RenderImageToDC(HDC hdc,
                                                    const PageRanges& ranges) {
   EnsureGdiplusInit();
   ComScope com;
-  const auto error = [&] {
+  auto img = OpenImage(path);
+  if (!img)
     return FlutterError("IMAGE_ERROR",
                         "Cannot decode image: " + WideToUtf8(path.c_str()));
-  };
-  auto img = OpenImage(path);
-  if (!img) return error();
 
-  // Decode a single page once, and fail before the job starts.
-  std::unique_ptr<Gdiplus::Bitmap> single;
-  if (img->pageCount == 1 && !(single = DecodePage(*img, 0))) return error();
-
+  // Keep the last decoded page, for copies of a single page.
+  int cached = -1;
+  std::unique_ptr<Gdiplus::Bitmap> bmp;
   return PrintPages(hdc, path, static_cast<int>(img->pageCount), copies, ranges,
                     [&](int i) {
-                      auto bmp = single ? nullptr : DecodePage(*img, i);
-                      Gdiplus::Bitmap* page = single ? single.get() : bmp.get();
-                      if (!page) return false;
-                      DrawFitted(hdc, page);
+                      if (i != cached) {
+                        bmp = DecodePage(*img, i);
+                        cached = i;
+                      }
+                      if (!bmp) return false;
+                      DrawFitted(hdc, bmp.get());
                       return true;
                     });
 }
@@ -479,27 +493,50 @@ static std::wstring DecodeTextBytes(const std::vector<uint8_t>& b) {
     return w;
   }
 
-  const int off = (n >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF) ? 3 : 0;
-  const auto* raw = reinterpret_cast<const char*>(b.data()) + off;
-  const int rawLen = static_cast<int>(n - off);
-
-  int wlen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, raw, rawLen,
-                                 nullptr, 0);
-  if (wlen > 0) {
-    std::wstring w(wlen, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, raw, rawLen, &w[0], wlen);
-    return w;
-  }
-
-  wlen = MultiByteToWideChar(CP_ACP, 0, raw, rawLen, nullptr, 0);
-  std::wstring w(wlen, L'\0');
-  MultiByteToWideChar(CP_ACP, 0, raw, rawLen, &w[0], wlen);
-  return w;
+  const size_t off =
+      (n >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF) ? 3 : 0;
+  const std::string_view raw(reinterpret_cast<const char*>(b.data()) + off,
+                             n - off);
+  std::wstring w = MultiByteToWide(raw, CP_UTF8, MB_ERR_INVALID_CHARS);
+  return w.empty() ? MultiByteToWide(raw, CP_ACP) : w;
 }
 
 std::wstring ReadTextFile(const std::wstring& path) {
   const auto bytes = ReadBytes(path);
   return bytes ? DecodeTextBytes(*bytes) : std::wstring{};
+}
+
+// Expands the tabs of |raw| and adds it to |lines|, wrapped at |width| pixels,
+// at a space when possible.
+static void WrapLine(HDC hdc, const std::wstring& raw, int width,
+                     std::vector<std::wstring>& lines) {
+  std::wstring line;
+  line.reserve(raw.size());
+  for (wchar_t ch : raw) {
+    if (ch == L'\t')
+      line.append(4 - line.size() % 4, L' ');
+    else
+      line += ch;
+  }
+  if (line.empty()) {
+    lines.push_back({});
+    return;
+  }
+
+  for (size_t start = 0; start < line.size();) {
+    INT fit = 0;
+    SIZE sz = {};
+    GetTextExtentExPointW(hdc, line.c_str() + start,
+                          static_cast<int>(line.size() - start), width, &fit,
+                          nullptr, &sz);
+    size_t advance = static_cast<size_t>(std::max(fit, 1));
+    if (start + advance < line.size()) {
+      const size_t sp = line.rfind(L' ', start + advance - 1);
+      if (sp != std::wstring::npos && sp > start) advance = sp - start + 1;
+    }
+    lines.push_back(line.substr(start, advance));
+    start += advance;
+  }
 }
 
 // Prints a text file in 10 pt Consolas with 1-inch margins, wrapping long
@@ -536,50 +573,12 @@ static std::optional<FlutterError> RenderTextToDC(HDC hdc,
   const int lineH        = tm.tmHeight + tm.tmExternalLeading;
   const int linesPerPage = (contentH > 0 && lineH > 0) ? contentH / lineH : 1;
 
-  // Split into printed lines: expand tabs, wrap at contentW, at a space when
-  // possible.
   std::vector<std::wstring> lines;
-  size_t pos = 0;
-  while (pos < text.size()) {
-    const size_t nl   = text.find_first_of(L"\r\n", pos);
-    const bool   last = (nl == std::wstring::npos);
-    const std::wstring raw = last ? text.substr(pos) : text.substr(pos, nl - pos);
-
-    std::wstring expanded;
-    expanded.reserve(raw.size());
-    for (wchar_t ch : raw) {
-      if (ch == L'\t')
-        expanded.append(4 - expanded.size() % 4, L' ');
-      else
-        expanded += ch;
-    }
-
-    if (expanded.empty()) {
-      lines.push_back({});
-    } else {
-      size_t lineStart = 0;
-      while (lineStart < expanded.size()) {
-        INT fit = 0;
-        SIZE sz = {};
-        GetTextExtentExPointW(hdc, expanded.c_str() + lineStart,
-                              static_cast<int>(expanded.size() - lineStart),
-                              contentW, &fit, nullptr, &sz);
-        if (fit <= 0) fit = 1;
-
-        int advance = fit;
-        if (lineStart + static_cast<size_t>(fit) < expanded.size()) {
-          const size_t sp = expanded.rfind(L' ', lineStart + fit - 1);
-          if (sp != std::wstring::npos && sp > lineStart)
-            advance = static_cast<int>(sp - lineStart + 1);
-        }
-        lines.push_back(expanded.substr(lineStart, advance));
-        lineStart += advance;
-      }
-    }
-
-    if (last) break;
-    pos = (nl + 1 < text.size() && text[nl] == L'\r' && text[nl + 1] == L'\n')
-              ? nl + 2 : nl + 1;
+  for (size_t pos = 0; pos < text.size();) {
+    const size_t nl = text.find_first_of(L"\r\n", pos);
+    WrapLine(hdc, text.substr(pos, nl - pos), contentW, lines);
+    if (nl == std::wstring::npos) break;
+    pos = nl + (text.compare(nl, 2, L"\r\n") == 0 ? 2 : 1);
   }
 
   const int total = static_cast<int>(lines.size());
@@ -617,37 +616,29 @@ std::optional<FlutterError> RenderToDC(HDC hdc, const std::wstring& wPath,
 
 std::optional<FlutterError> ShellPrint(const std::wstring& wPath,
                                        const std::wstring& printerName) {
-  SHELLEXECUTEINFOW sei = {};
-  sei.cbSize = sizeof(sei);
-  // NOCLOSEPROCESS: get the handler process, to catch a crash.
-  // NOASYNC: finish any DDE talk before returning, as we pump no messages.
-  // FLAG_NO_UI: show no shell error dialog.
-  sei.fMask  = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
-  sei.lpVerb = printerName.empty() ? L"print" : L"printto";
-  sei.lpFile = wPath.c_str();
-  sei.lpParameters = printerName.empty() ? nullptr : printerName.c_str();
-  sei.nShow  = SW_HIDE;
-
-  if (!ShellExecuteExW(&sei)) {
-    const DWORD e = GetLastError();
+  // Get the handler process, to catch a crash.
+  HANDLE process = nullptr;
+  const bool printTo = !printerName.empty();
+  if (const DWORD e = ShellRun(printTo ? L"printto" : L"print", wPath,
+                               printTo ? printerName.c_str() : nullptr, SW_HIDE,
+                               &process))
     return FlutterError("SHELL_ERROR",
                         "Failed to launch print handler for " +
                             WideToUtf8(wPath.c_str()) + " (error " +
                             std::to_string(e) + ")");
-  }
-  if (!sei.hProcess) return std::nullopt;
+  if (!process) return std::nullopt;
 
   // Wait a little to catch a handler that fails at once. Many handlers keep
   // running after the job is spooled, so a running process is a success.
   constexpr DWORD kHelperWaitMs = 10000;
   std::optional<FlutterError> err;
   DWORD code = 0;
-  if (WaitForSingleObject(sei.hProcess, kHelperWaitMs) == WAIT_OBJECT_0 &&
-      GetExitCodeProcess(sei.hProcess, &code) && code != 0) {
+  if (WaitForSingleObject(process, kHelperWaitMs) == WAIT_OBJECT_0 &&
+      GetExitCodeProcess(process, &code) && code != 0) {
     err = FlutterError("SHELL_ERROR",
                        "Print handler exited with code " + std::to_string(code));
   }
-  CloseHandle(sei.hProcess);
+  CloseHandle(process);
   return err;
 }
 
@@ -701,10 +692,7 @@ static std::vector<uint8_t> RenderPdfPageToPng(const std::wstring& path,
 std::vector<uint8_t> RenderPageToPng(const std::wstring& path, FileKind kind,
                                      int pageIndex, double dpi) {
   EnsureGdiplusInit();
-  const double maxSide = 12 * dpi;
-  const auto fitScale = [&](Gdiplus::Image& img) {
-    return maxSide / std::max({img.GetWidth(), img.GetHeight(), 1u});
-  };
+  const UINT maxSide = static_cast<UINT>(12 * dpi);
 
   switch (kind) {
     case FileKind::kPdf:
@@ -713,15 +701,16 @@ std::vector<uint8_t> RenderPageToPng(const std::wstring& path, FileKind kind,
       ComScope com;
       auto img = OpenImage(path);
       if (!img || pageIndex < 0) return {};
-      auto bmp = DecodePage(*img, static_cast<UINT>(pageIndex));
-      // Never enlarge a bitmap.
-      return bmp ? ImageToPng(bmp.get(), std::min(1.0, fitScale(*bmp)))
-                 : std::vector<uint8_t>{};
+      // The decoder shrinks large pages, and never enlarges small ones.
+      auto bmp = DecodePage(*img, static_cast<UINT>(pageIndex), maxSide);
+      return bmp ? ImageToPng(bmp.get(), 1.0) : std::vector<uint8_t>{};
     }
     case FileKind::kMetafile: {
       Gdiplus::Metafile metafile(path.c_str());
       if (metafile.GetLastStatus() != Gdiplus::Ok) return {};
-      return ImageToPng(&metafile, fitScale(metafile));
+      return ImageToPng(&metafile, static_cast<double>(maxSide) /
+                                       std::max({metafile.GetWidth(),
+                                                 metafile.GetHeight(), 1u}));
     }
     default:
       return {};

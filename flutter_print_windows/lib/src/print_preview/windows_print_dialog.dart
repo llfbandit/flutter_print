@@ -3,7 +3,6 @@ import 'package:flutter_print_platform_interface/flutter_print_platform_interfac
 
 import '../windows_print_channel.dart';
 import 'l10n/print_localizations.dart';
-import 'print_dialog_utils.dart';
 import 'widgets/print_preview_panel.dart';
 import 'widgets/print_settings_panel.dart';
 
@@ -122,7 +121,10 @@ class _PrintDialogState extends State<_PrintDialog> {
   Future<void> _loadPageCount() async {
     var count = 0;
     try {
-      count = await WindowsPrintChannel.getPageCount(widget.filePath);
+      count = await WindowsPrintChannel.getPageCount(
+        widget.filePath,
+        widget.kind,
+      );
     } catch (_) {
       // Show the preview as unavailable.
     }

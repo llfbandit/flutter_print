@@ -4,7 +4,6 @@
 #include <cmath>
 #include <optional>
 
-#pragma comment(lib, "winspool.lib")
 
 namespace flutter_print {
 
@@ -91,15 +90,6 @@ static std::vector<BYTE> ReadDevMode(HANDLE hPrinter,
   return buf;
 }
 
-std::vector<BYTE> GetDefaultDevMode(const std::wstring& printerName) {
-  HANDLE hPrinter = nullptr;
-  if (!OpenPrinterW(const_cast<LPWSTR>(printerName.c_str()), &hPrinter, nullptr))
-    return {};
-  std::vector<BYTE> buf = ReadDevMode(hPrinter, printerName);
-  ClosePrinter(hPrinter);
-  return buf;
-}
-
 // Returns the printer's DEVMODE with |options| applied, or empty on error.
 static std::vector<BYTE> BuildDevMode(const std::wstring& printerName,
                                       const PrintOptions* options,
@@ -109,7 +99,8 @@ static std::vector<BYTE> BuildDevMode(const std::wstring& printerName,
   const int64_t* copiesOpt = options ? options->copies() : nullptr;
   const int requestedCopies =
       copiesOpt ? static_cast<int>(std::max<int64_t>(1, *copiesOpt)) : 1;
-  const bool driverCopies = GetDriverMaxCopies(printerName) >= requestedCopies;
+  const bool driverCopies =
+      requestedCopies == 1 || GetDriverMaxCopies(printerName) >= requestedCopies;
   if (out_software_copies)
     *out_software_copies = driverCopies ? 1 : requestedCopies;
 
@@ -131,6 +122,10 @@ static std::vector<BYTE> BuildDevMode(const std::wstring& printerName,
   return buf;
 }
 
+std::vector<BYTE> GetDefaultDevMode(const std::wstring& printerName) {
+  return BuildDevMode(printerName, nullptr, nullptr);
+}
+
 HDC CreatePrinterDC(const std::wstring& printerName,
                     const PrintOptions* options,
                     int* out_software_copies) {
@@ -143,10 +138,13 @@ std::optional<PrinterMargins> GetMinimumMargins(const std::wstring& printerName,
                                                 const std::string& paperSizeName,
                                                 double paperWidthMm,
                                                 double paperHeightMm) {
-  // Build the DC like the print path does.
+  // Build the DEVMODE like the print path does. An information context is
+  // enough for GetDeviceCaps and cheaper than a DC.
   PrintOptions options;
   options.set_page_size(PageSize(paperSizeName, &paperWidthMm, &paperHeightMm));
-  HDC hdc = CreatePrinterDC(printerName, &options);
+  std::vector<BYTE> dm = BuildDevMode(printerName, &options, nullptr);
+  HDC hdc = CreateICW(L"WINSPOOL", printerName.c_str(), nullptr,
+                      dm.empty() ? nullptr : reinterpret_cast<DEVMODE*>(dm.data()));
   if (!hdc) return std::nullopt;
 
   // The printable area starts at PHYSICALOFFSET and has the HORZRES/VERTRES

@@ -55,6 +55,10 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
   flutter
   flutter_wrapper_plugin
   gdiplus
+  ole32
+  shell32
+  windowscodecs
+  winspool
   "${pdfium_SOURCE_DIR}/lib/pdfium.dll.lib"
 )
 

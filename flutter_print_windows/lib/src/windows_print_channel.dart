@@ -1,7 +1,8 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_print_platform_interface/flutter_print_platform_interface.dart';
 
-import 'print_preview/print_dialog_utils.dart';
+/// How the plugin prints a file. It opens [other] files in their default app.
+enum FileKind { pdf, image, metafile, text, other }
 
 class WindowsPrintChannel {
   static const _channel = MethodChannel('flutter_print_windows');
@@ -13,20 +14,24 @@ class WindowsPrintChannel {
     return FileKind.values.asNameMap()[name] ?? FileKind.other;
   }
 
-  /// Returns the page count of a PDF or image, or 0 on error.
-  static Future<int> getPageCount(String filePath) async =>
+  /// Returns the page count of a PDF, image or metafile, or 0 on error.
+  static Future<int> getPageCount(String filePath, FileKind kind) async =>
       await _channel.invokeMethod<int>('getPageCount', {
         'filePath': filePath,
+        'kind': kind.name,
       }) ??
       0;
 
-  /// Renders a page (0-based) of a PDF or image to PNG, or returns null.
+  /// Renders a page (0-based) of a PDF, image or metafile to PNG, or returns
+  /// null.
   static Future<Uint8List?> renderPageToPng(
     String filePath,
+    FileKind kind,
     int pageIndex,
     double dpi,
   ) => _channel.invokeMethod<Uint8List>('renderPageToPng', {
     'filePath': filePath,
+    'kind': kind.name,
     'pageIndex': pageIndex,
     'dpi': dpi,
   });

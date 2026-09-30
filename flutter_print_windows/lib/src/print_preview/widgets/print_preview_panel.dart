@@ -9,7 +9,6 @@ import 'package:flutter_print_platform_interface/flutter_print_platform_interfac
 
 import '../../windows_print_channel.dart';
 import '../l10n/print_localizations.dart';
-import '../print_dialog_utils.dart';
 
 const _grayscaleFilter = ColorFilter.matrix(<double>[
   0.2126, 0.7152, 0.0722, 0, 0, //
@@ -98,13 +97,10 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
     }
     return _PagedPreview(
       filePath: widget.filePath,
+      kind: widget.kind,
       pageCount: widget.pageCount,
       color: widget.options.color ?? true,
       pageRanges: widget.options.pageRanges,
-      // Print draws PDF pages from the sheet corner, and centers images.
-      alignment: widget.kind == FileKind.pdf
-          ? Alignment.topLeft
-          : Alignment.center,
       paper: paper,
     );
   }
@@ -171,18 +167,18 @@ class _PaperShell extends StatelessWidget {
 class _PagedPreview extends StatefulWidget {
   const _PagedPreview({
     required this.filePath,
+    required this.kind,
     required this.pageCount,
     required this.color,
     required this.pageRanges,
-    required this.alignment,
     required this.paper,
   });
 
   final String filePath;
+  final FileKind kind;
   final int? pageCount;
   final bool color;
   final List<PageRange>? pageRanges;
-  final Alignment alignment;
   final Widget Function(Widget page) paper;
 
   @override
@@ -267,6 +263,7 @@ class _PagedPreviewState extends State<_PagedPreview> {
     try {
       img = await WindowsPrintChannel.renderPageToPng(
         widget.filePath,
+        widget.kind,
         page,
         150.0,
       );
@@ -298,7 +295,10 @@ class _PagedPreviewState extends State<_PagedPreview> {
       Widget img = Image.memory(
         _previewImg!,
         fit: BoxFit.contain,
-        alignment: widget.alignment,
+        // Print draws PDF pages from the sheet corner, and centers images.
+        alignment: widget.kind == FileKind.pdf
+            ? Alignment.topLeft
+            : Alignment.center,
       );
       if (!widget.color) {
         img = ColorFiltered(colorFilter: _grayscaleFilter, child: img);
