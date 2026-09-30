@@ -256,13 +256,16 @@ class PrintOptions {
   // - **iOS** — must be a full AirPrint URL (e.g.
   //   `'ipp://printer.local/ipp/print'`). When provided the job is sent
   //   directly without showing a dialog.
+  //
+  // An invalid or unreachable printer fails with `PRINTER_ERROR` (iOS,
+  // macOS).
   const std::string* printer_address() const;
   void set_printer_address(const std::string_view* value_arg);
   void set_printer_address(std::string_view value_arg);
 
   // Desired output page size.
   //
-  // Platform support: Android, macOS, Linux (named sizes only), Windows
+  // Platform support: Android, macOS, Linux, Windows
   // (PDF, image, and text files).
   const PageSize* page_size() const;
   void set_page_size(const PageSize* value_arg);
@@ -300,8 +303,7 @@ class PrintOptions {
   // Duplex (double-sided) printing mode.
   //
   // When `null` the platform default is used (typically single-sided).
-  // Ignored on iOS (controlled by the system dialog) and on Windows for
-  // unknown file types.
+  // Ignored on Windows for unknown file types.
   const DuplexMode* duplex_mode() const;
   void set_duplex_mode(const DuplexMode* value_arg);
   void set_duplex_mode(const DuplexMode& value_arg);

@@ -2,8 +2,13 @@ import Flutter
 import UIKit
 
 public class FlutterPrintPlugin: NSObject, FlutterPlugin {
+  private weak var registrar: FlutterPluginRegistrar?
+  // All jobs share UIPrintInteractionController.shared: run one at a time.
+  private var isPrinting = false
+
   public static func register(with registrar: FlutterPluginRegistrar) {
     let instance = FlutterPrintPlugin()
+    instance.registrar = registrar
     FlutterPrintApiSetup.setUp(binaryMessenger: registrar.messenger(), api: instance)
   }
 }
@@ -27,39 +32,39 @@ extension FlutterPrintPlugin: FlutterPrintApi {
   }
 
   func pickPrinter(completion: @escaping (Result<PrinterInfo?, any Error>) -> Void) {
-    DispatchQueue.main.async {
-      guard let rootVC = self.rootViewController() else {
+    guard let view = registrar?.viewController?.view else {
+      completion(.failure(Self.noWindowError))
+      return
+    }
+
+    let picker = UIPrinterPickerController(initiallySelectedPrinter: nil)
+    // Capturing the picker keeps it alive until it completes.
+    let handler: UIPrinterPickerController.CompletionHandler = { _, userDidSelect, _ in
+      guard userDidSelect, let printer = picker.selectedPrinter else {
         completion(.success(nil))
         return
       }
+      completion(.success(PrinterInfo(
+        label: printer.displayName,
+        address: printer.url.absoluteString,
+        isDefault: false,
+        capabilities: PrinterCapabilities(
+          colorCapability: .unknown,
+          supportsDuplex: nil,
+          maxCopies: nil,
+          supportedPageSizes: []
+        )
+      )))
+    }
 
-      let picker = UIPrinterPickerController(initiallySelectedPrinter: nil)
-
-      let handler: UIPrinterPickerController.CompletionHandler = { [picker] controller, userDidSelect, _ in
-        _ = picker
-        guard userDidSelect, let printer = controller.selectedPrinter else {
-          completion(.success(nil))
-          return
-        }
-        completion(.success(PrinterInfo(
-          label: printer.displayName,
-          address: printer.url.absoluteString,
-          isDefault: false,
-          capabilities: PrinterCapabilities(
-            colorCapability: .unknown,
-            supportsDuplex: nil,
-            maxCopies: nil,
-            supportedPageSizes: []
-          )
-        )))
-      }
-
-      if UIDevice.current.userInterfaceIdiom == .pad {
-        picker.present(from: rootVC.view.bounds, in: rootVC.view,
+    let presented = UIDevice.current.userInterfaceIdiom == .pad
+      ? picker.present(from: Self.popoverAnchor(in: view), in: view,
                        animated: true, completionHandler: handler)
-      } else {
-        picker.present(animated: true, completionHandler: handler)
-      }
+      : picker.present(animated: true, completionHandler: handler)
+    // UIKit doesn't call the handler when it can't show the picker.
+    if !presented {
+      completion(.failure(PigeonError(code: "PRINT_ERROR",
+                                      message: "Failed to present the printer picker")))
     }
   }
 }
@@ -83,10 +88,15 @@ private extension FlutterPrintPlugin {
       return
     }
 
+    guard !isPrinting else {
+      completion(.failure(PigeonError(code: "PRINT_ERROR",
+                                      message: "Another print job is in progress")))
+      return
+    }
+
     let printInfo = UIPrintInfo(dictionary: nil)
     printInfo.jobName = fileURL.lastPathComponent
-    // Each option is applied only when provided; unset fields keep UIPrintInfo's
-    // system defaults.
+    // Unset options keep the system defaults.
     if let color = options?.color {
       printInfo.outputType = color ? .general : .grayscale
     }
@@ -101,63 +111,74 @@ private extension FlutterPrintPlugin {
       }
     }
 
-    DispatchQueue.main.async {
-      let controller = UIPrintInteractionController.shared
+    let controller = UIPrintInteractionController.shared
+    // Report a cancel as success: it is a normal outcome.
+    let printHandler: UIPrintInteractionController.CompletionHandler = { _, _, error in
+      self.isPrinting = false
+      if let error {
+        completion(.failure(PigeonError(code: "PRINT_ERROR",
+                                        message: error.localizedDescription)))
+      } else {
+        completion(.success(()))
+      }
+    }
+    // Set the job only once it can run, so a failed call leaves others alone.
+    let start = {
+      self.isPrinting = true
       controller.printInfo = printInfo
       controller.printingItem = fileURL
+    }
 
-      // Bridges the UIKit completion handler to the Pigeon completion. A
-      // user-cancelled dialog (completed == false) is reported as success,
-      // since cancellation is a normal outcome rather than a failure.
-      let printHandler: UIPrintInteractionController.CompletionHandler = { _, _, error in
-        if let error {
-          completion(.failure(PigeonError(code: "PRINT_ERROR",
-                                          message: error.localizedDescription)))
-        } else {
-          completion(.success(()))
-        }
+    // With a printer address, print directly without UI.
+    if !showPreview, let address = options?.printerAddress, !address.isEmpty {
+      guard let url = URL(string: address) else {
+        completion(.failure(PigeonError(code: "PRINTER_ERROR",
+                                        message: "Invalid printer address: \(address)")))
+        return
       }
-
-      // If a printer URL string is provided, print directly without UI.
-      // This path does not need a view controller.
-      if !showPreview,
-         let urlString = options?.printerAddress,
-         let printerURL = URL(string: urlString)
-      {
-        let printer = UIPrinter(url: printerURL)
+      let printer = UIPrinter(url: url)
+      // Fail like macOS for an unknown printer.
+      isPrinting = true
+      printer.contactPrinter { available in DispatchQueue.main.async {
+        guard available else {
+          self.isPrinting = false
+          completion(.failure(PigeonError(code: "PRINTER_ERROR",
+                                          message: "Printer not found: \(address)")))
+          return
+        }
+        start()
         if !controller.print(to: printer, completionHandler: printHandler) {
+          self.isPrinting = false
           completion(.failure(PigeonError(code: "PRINT_ERROR",
                                           message: "Failed to start the print job")))
         }
-        return
-      }
+      }}
+      return
+    }
 
-      guard let rootVC = self.rootViewController() else {
-        completion(.failure(PigeonError(code: "NO_WINDOW",
-                                        message: "No active window to present the print dialog")))
-        return
-      }
-
-      let presented: Bool
-      if UIDevice.current.userInterfaceIdiom == .pad {
-        presented = controller.present(from: rootVC.view.bounds, in: rootVC.view,
-                                       animated: true, completionHandler: printHandler)
-      } else {
-        presented = controller.present(animated: true, completionHandler: printHandler)
-      }
-      if !presented {
-        completion(.failure(PigeonError(code: "PRINT_ERROR",
-                                        message: "Failed to present the print dialog")))
-      }
+    guard let view = registrar?.viewController?.view else {
+      completion(.failure(Self.noWindowError))
+      return
+    }
+    start()
+    let presented = UIDevice.current.userInterfaceIdiom == .pad
+      ? controller.present(from: Self.popoverAnchor(in: view), in: view,
+                           animated: true, completionHandler: printHandler)
+      : controller.present(animated: true, completionHandler: printHandler)
+    if !presented {
+      isPrinting = false
+      completion(.failure(PigeonError(code: "PRINT_ERROR",
+                                      message: "Failed to present the print dialog")))
     }
   }
 
-  func rootViewController() -> UIViewController? {
-    UIApplication.shared.connectedScenes
-      .compactMap { $0 as? UIWindowScene }
-      .first(where: { $0.activationState == .foregroundActive })?
-      .windows.first(where: { $0.isKeyWindow })?
-      .rootViewController
+  static let noWindowError = PigeonError(code: "NO_WINDOW",
+                                         message: "No view to present the print dialog")
+
+  /// A point at the centre of [view]: a full-view rect leaves the popover
+  /// arrow no room.
+  static func popoverAnchor(in view: UIView) -> CGRect {
+    CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
   }
 }
 

@@ -385,10 +385,13 @@ struct PrintOptions: Hashable, CustomStringConvertible {
   /// - **iOS** — must be a full AirPrint URL (e.g.
   ///   `'ipp://printer.local/ipp/print'`). When provided the job is sent
   ///   directly without showing a dialog.
+  ///
+  /// An invalid or unreachable printer fails with `PRINTER_ERROR` (iOS,
+  /// macOS).
   var printerAddress: String? = nil
   /// Desired output page size.
   ///
-  /// Platform support: Android, macOS, Linux (named sizes only), Windows
+  /// Platform support: Android, macOS, Linux, Windows
   /// (PDF, image, and text files).
   var pageSize: PageSize? = nil
   /// Output page margins.
@@ -411,8 +414,7 @@ struct PrintOptions: Hashable, CustomStringConvertible {
   /// Duplex (double-sided) printing mode.
   ///
   /// When `null` the platform default is used (typically single-sided).
-  /// Ignored on iOS (controlled by the system dialog) and on Windows for
-  /// unknown file types.
+  /// Ignored on Windows for unknown file types.
   var duplexMode: DuplexMode? = nil
   /// Pages to print, as one or more 1-based, inclusive ranges. For example,
   /// pages 1–3 and 5 → `[PageRange(start: 1, end: 3), PageRange(start: 5,

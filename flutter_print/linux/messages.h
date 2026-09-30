@@ -343,6 +343,9 @@ FlutterPrintPrintOptions* flutter_print_print_options_new(const gchar* printer_a
  *   `'ipp://printer.local/ipp/print'`). When provided the job is sent
  *   directly without showing a dialog.
  *
+ * An invalid or unreachable printer fails with `PRINTER_ERROR` (iOS,
+ * macOS).
+ *
  * Returns: the field value.
  */
 const gchar* flutter_print_print_options_get_printer_address(FlutterPrintPrintOptions* object);
@@ -353,7 +356,7 @@ const gchar* flutter_print_print_options_get_printer_address(FlutterPrintPrintOp
  *
  * Desired output page size.
  *
- * Platform support: Android, macOS, Linux (named sizes only), Windows
+ * Platform support: Android, macOS, Linux, Windows
  * (PDF, image, and text files).
  *
  * Returns: the field value.
@@ -416,8 +419,7 @@ gboolean* flutter_print_print_options_get_color(FlutterPrintPrintOptions* object
  * Duplex (double-sided) printing mode.
  *
  * When `null` the platform default is used (typically single-sided).
- * Ignored on iOS (controlled by the system dialog) and on Windows for
- * unknown file types.
+ * Ignored on Windows for unknown file types.
  *
  * Returns: the field value.
  */

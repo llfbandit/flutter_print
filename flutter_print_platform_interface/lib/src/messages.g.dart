@@ -334,11 +334,14 @@ class PrintOptions {
   /// - **iOS** — must be a full AirPrint URL (e.g.
   ///   `'ipp://printer.local/ipp/print'`). When provided the job is sent
   ///   directly without showing a dialog.
+  ///
+  /// An invalid or unreachable printer fails with `PRINTER_ERROR` (iOS,
+  /// macOS).
   String? printerAddress;
 
   /// Desired output page size.
   ///
-  /// Platform support: Android, macOS, Linux (named sizes only), Windows
+  /// Platform support: Android, macOS, Linux, Windows
   /// (PDF, image, and text files).
   PageSize? pageSize;
 
@@ -366,8 +369,7 @@ class PrintOptions {
   /// Duplex (double-sided) printing mode.
   ///
   /// When `null` the platform default is used (typically single-sided).
-  /// Ignored on iOS (controlled by the system dialog) and on Windows for
-  /// unknown file types.
+  /// Ignored on Windows for unknown file types.
   DuplexMode? duplexMode;
 
   /// Pages to print, as one or more 1-based, inclusive ranges. For example,

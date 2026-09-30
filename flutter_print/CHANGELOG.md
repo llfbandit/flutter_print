@@ -6,6 +6,10 @@
 * fix(macos): Don't crash on a negative or out-of-range `copies`.
 * fix(macos): Print rotated and cropped PDF pages as displayed.
 * fix(macos): Fail with `PRINTER_ERROR` for an unknown `printerAddress` instead of using the default printer.
+* fix(ios): Complete `pickPrinter` when the picker can't be shown, and fail with `NO_WINDOW` instead of returning `null` without a view.
+* fix(ios): Reject a print job while another one runs, instead of changing the open dialog.
+* fix(ios): Present from the Flutter view, and anchor the iPad popover to its centre.
+* fix(ios): Fail with `PRINTER_ERROR` for an invalid or unreachable `printerAddress`.
 
 ## 0.4.0
 * feat: Make print options nullable to get system defaults.
