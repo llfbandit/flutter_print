@@ -70,8 +70,12 @@ static void ApplyOptionsToDEVMODE(DEVMODE* dm, const PrintOptions& options,
   dm->dmPaperWidth  = static_cast<short>(std::round(std::min(*w, *h) * 10.0));
   dm->dmPaperLength = static_cast<short>(std::round(std::max(*w, *h) * 10.0));
   dm->dmFields     |= DM_PAPERSIZE | DM_PAPERWIDTH | DM_PAPERLENGTH;
-  // Set the orientation so the DC width matches the requested width.
-  dm->dmOrientation = (*w > *h) ? DMORIENT_LANDSCAPE : DMORIENT_PORTRAIT;
+  // Set the orientation so the DC width matches the requested width, or its
+  // height in landscape.
+  const bool landscape = options.landscape() && *options.landscape();
+  dm->dmOrientation =
+      (*w > *h) != landscape ? DMORIENT_LANDSCAPE : DMORIENT_PORTRAIT;
+  dm->dmFields |= DM_ORIENTATION;
 }
 
 static std::vector<BYTE> ReadDevMode(HANDLE hPrinter,
