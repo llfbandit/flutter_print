@@ -38,6 +38,8 @@ std::wstring DefaultPrinterName() {
 
 DWORD ShellRun(const wchar_t* verb, const std::wstring& path,
                const wchar_t* params, int show, HANDLE* process) {
+  // Some verbs run in COM handlers, e.g. packaged apps.
+  ComScope com;
   SHELLEXECUTEINFOW sei = {};
   sei.cbSize = sizeof(sei);
   // NOASYNC: finish any DDE talk before returning, as the caller pumps no
