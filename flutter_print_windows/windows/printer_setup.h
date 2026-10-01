@@ -48,7 +48,8 @@ struct PrinterMargins {
 
 // Returns the unprintable margins of |printerName| for a paper size.
 // |paperSizeName| is a known name like "A4"; when it is empty or unknown, the
-// width and height give a custom size. Returns nullopt on error.
+// width and height give a custom size. The width and height are oriented:
+// width > height means landscape. Returns nullopt on error.
 std::optional<PrinterMargins> GetMinimumMargins(const std::wstring& printerName,
                                                 const std::string& paperSizeName,
                                                 double paperWidthMm,

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io' show File, Platform;
+import 'dart:math' show min;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show listEquals;
@@ -86,10 +87,11 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
   @override
   Widget build(BuildContext context) {
     final (paperW, paperH) = _paperMm;
-    Widget paper(Widget child) => _PaperShell(
+    Widget paper(Widget child, {bool fullSheet = false}) => _PaperShell(
       widthMm: paperW,
       heightMm: paperH,
       minimumMargins: _minimumMargins,
+      fullSheet: fullSheet,
       child: child,
     );
     if (widget.kind == FileKind.text) {
@@ -101,6 +103,7 @@ class _PrintPreviewPanelState extends State<PrintPreviewPanel> {
       pageCount: widget.pageCount,
       color: widget.options.color ?? true,
       pageRanges: widget.options.pageRanges,
+      paperMm: (paperW, paperH),
       paper: paper,
     );
   }
@@ -115,12 +118,16 @@ class _PaperShell extends StatelessWidget {
     required this.widthMm,
     required this.heightMm,
     required this.minimumMargins,
+    required this.fullSheet,
     required this.child,
   });
 
   final double widthMm;
   final double heightMm;
   final PageMargins? minimumMargins;
+
+  /// Lays [child] out on the whole sheet, not only in the printable area.
+  final bool fullSheet;
   final Widget child;
 
   @override
@@ -140,17 +147,17 @@ class _PaperShell extends StatelessWidget {
             builder: (context, constraints) {
               final pw = constraints.maxWidth;
               final ph = constraints.maxHeight;
-              return Padding(
-                padding: m == null
-                    ? EdgeInsets.zero
-                    : EdgeInsets.fromLTRB(
-                        m.left / widthMm * pw,
-                        m.top / heightMm * ph,
-                        m.right / widthMm * pw,
-                        m.bottom / heightMm * ph,
-                      ),
-                child: child,
-              );
+              final printable = m == null
+                  ? EdgeInsets.zero
+                  : EdgeInsets.fromLTRB(
+                      m.left / widthMm * pw,
+                      m.top / heightMm * ph,
+                      m.right / widthMm * pw,
+                      m.bottom / heightMm * ph,
+                    );
+              if (!fullSheet) return Padding(padding: printable, child: child);
+              // Hide what falls in the margins, as the printer drops it.
+              return ClipRect(clipper: _InsetClipper(printable), child: child);
             },
           ),
         ),
@@ -159,9 +166,31 @@ class _PaperShell extends StatelessWidget {
   }
 }
 
+class _InsetClipper extends CustomClipper<Rect> {
+  const _InsetClipper(this.insets);
+
+  final EdgeInsets insets;
+
+  @override
+  Rect getClip(Size size) => insets.deflateRect(Offset.zero & size);
+
+  @override
+  bool shouldReclip(_InsetClipper old) => old.insets != insets;
+}
+
 // ---------------------------------------------------------------------------
 // PDF and image preview
 // ---------------------------------------------------------------------------
+
+const _previewDpi = 150.0;
+
+/// Size in mm of a PNG rendered at [_previewDpi], read from its header.
+(double, double)? _pngSizeMm(Uint8List png) {
+  if (png.length < 24) return null;
+  final data = ByteData.sublistView(png);
+  const mmPerPixel = 25.4 / _previewDpi;
+  return (data.getUint32(16) * mmPerPixel, data.getUint32(20) * mmPerPixel);
+}
 
 /// Shows the pages the plugin renders, one at a time.
 class _PagedPreview extends StatefulWidget {
@@ -171,6 +200,7 @@ class _PagedPreview extends StatefulWidget {
     required this.pageCount,
     required this.color,
     required this.pageRanges,
+    required this.paperMm,
     required this.paper,
   });
 
@@ -179,7 +209,10 @@ class _PagedPreview extends StatefulWidget {
   final int? pageCount;
   final bool color;
   final List<PageRange>? pageRanges;
-  final Widget Function(Widget page) paper;
+
+  /// Oriented sheet width and height in mm.
+  final (double, double) paperMm;
+  final Widget Function(Widget page, {bool fullSheet}) paper;
 
   @override
   State<_PagedPreview> createState() => _PagedPreviewState();
@@ -265,7 +298,7 @@ class _PagedPreviewState extends State<_PagedPreview> {
         widget.filePath,
         widget.kind,
         page,
-        150.0,
+        _previewDpi,
       );
     } catch (_) {
       // Show the preview as unavailable.
@@ -291,28 +324,40 @@ class _PagedPreviewState extends State<_PagedPreview> {
     if (_loadingPreview || widget.pageCount == null) {
       return const Center(child: ProgressRing());
     }
-    if (_previewImg != null) {
-      Widget img = Image.memory(
-        _previewImg!,
-        fit: BoxFit.contain,
-        // Print draws PDF pages from the sheet corner, and centers images.
-        alignment: widget.kind == FileKind.pdf
-            ? Alignment.topLeft
-            : Alignment.center,
-      );
-      if (!widget.color) {
-        img = ColorFiltered(colorFilter: _grayscaleFilter, child: img);
-      }
-      return img;
+    final png = _previewImg;
+    if (png == null) return Center(child: Text(l10n.previewUnavailable));
+
+    Widget img = Image.memory(png, fit: BoxFit.contain);
+    if (!widget.color) {
+      img = ColorFiltered(colorFilter: _grayscaleFilter, child: img);
     }
-    return Center(child: Text(l10n.previewUnavailable));
+    if (widget.kind != FileKind.pdf) return img;
+
+    // Like print: draw from the sheet corner at true size, and shrink pages
+    // too large for the sheet.
+    final size = _pngSizeMm(png);
+    if (size == null) return img;
+    final (pageW, pageH) = size;
+    final (sheetW, sheetH) = widget.paperMm;
+    final s = [1.0, sheetW / pageW, sheetH / pageH].reduce(min);
+    return FractionallySizedBox(
+      alignment: Alignment.topLeft,
+      widthFactor: pageW * s / sheetW,
+      heightFactor: pageH * s / sheetH,
+      child: img,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Expanded(child: widget.paper(_buildContent(context))),
+        Expanded(
+          child: widget.paper(
+            _buildContent(context),
+            fullSheet: widget.kind == FileKind.pdf,
+          ),
+        ),
         if (_selected.length > 1)
           Padding(
             padding: const EdgeInsets.only(top: 8),

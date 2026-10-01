@@ -1,6 +1,7 @@
 #include "printer_setup.h"
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <optional>
 
@@ -97,8 +98,10 @@ static std::vector<BYTE> BuildDevMode(const std::wstring& printerName,
   // When the driver can't make all the copies, ask it for one and draw the
   // copies in software.
   const int64_t* copiesOpt = options ? options->copies() : nullptr;
+  // dmCopies is a short: clamp to its range.
   const int requestedCopies =
-      copiesOpt ? static_cast<int>(std::max<int64_t>(1, *copiesOpt)) : 1;
+      copiesOpt ? static_cast<int>(std::clamp<int64_t>(*copiesOpt, 1, SHRT_MAX))
+                : 1;
   const bool driverCopies =
       requestedCopies == 1 || GetDriverMaxCopies(printerName) >= requestedCopies;
   if (out_software_copies)
@@ -141,6 +144,8 @@ std::optional<PrinterMargins> GetMinimumMargins(const std::wstring& printerName,
   // Build the DEVMODE like the print path does. An information context is
   // enough for GetDeviceCaps and cheaper than a DC.
   PrintOptions options;
+  // Named papers take their orientation from the oriented width and height.
+  options.set_landscape(paperWidthMm > paperHeightMm);
   options.set_page_size(PageSize(paperSizeName, &paperWidthMm, &paperHeightMm));
   std::vector<BYTE> dm = BuildDevMode(printerName, &options, nullptr);
   HDC hdc = CreateICW(L"WINSPOOL", printerName.c_str(), nullptr,

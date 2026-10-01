@@ -8,6 +8,7 @@
 * feat: Print EMF and WMF files as vectors.
 * feat: Preview images, TIFF pages and metafiles in the print dialog.
 * fix: Open HTML, SVG and RTF files in their default app instead of printing their source.
+* fix: Place PDF pages in the preview as print does.
 
 ## 0.2.0
 * feat: Make print options nullable to get system defaults.
