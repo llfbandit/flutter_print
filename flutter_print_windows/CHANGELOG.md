@@ -8,7 +8,9 @@
 * feat: Print EMF and WMF files as vectors.
 * feat: Preview images, TIFF pages and metafiles in the print dialog.
 * fix: Open HTML, SVG and RTF files in their default app instead of printing their source.
+* fix: Default the print dialog to the printer's paper size instead of A4.
 * fix: Place PDF pages in the preview as print does.
+* fix: Select the caller's printer in the print dialog, not always the default.
 
 ## 0.2.0
 * feat: Make print options nullable to get system defaults.

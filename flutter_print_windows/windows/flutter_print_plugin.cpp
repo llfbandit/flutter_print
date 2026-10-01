@@ -300,6 +300,7 @@ void FlutterPrintPlugin::HandleWindowsMethod(
   if (method == "renderPageToPng")    return HandleRenderPageToPng(*args, std::move(result));
   if (method == "decodeTextFile")     return HandleDecodeTextFile(*args, std::move(result));
   if (method == "getMinimumMargins")  return HandleGetMinimumMargins(*args, std::move(result));
+  if (method == "getDefaultPaperSize") return HandleGetDefaultPaperSize(*args, std::move(result));
   if (method == "openInDefaultApp")   return HandleOpenInDefaultApp(*args, std::move(result));
   result->NotImplemented();
 }
@@ -377,6 +378,20 @@ void FlutterPrintPlugin::HandleGetMinimumMargins(
                    {flutter::EncodableValue("bottom"), flutter::EncodableValue(m->bottom)},
                });
              });
+}
+
+void FlutterPrintPlugin::HandleGetDefaultPaperSize(
+    const flutter::EncodableMap& args, WinResult result) {
+  const auto* printer = GetArg<std::string>(args, "printerName");
+  if (!printer) {
+    result->Error("INVALID_ARGS", "Missing printerName");
+    return;
+  }
+  ReplyAsync(alive_, std::move(result), [wPrinter = Utf8ToWide(*printer)] {
+    const std::string name = DefaultPaperName(wPrinter);
+    return name.empty() ? flutter::EncodableValue()
+                        : flutter::EncodableValue(name);
+  });
 }
 
 void FlutterPrintPlugin::HandleOpenInDefaultApp(const flutter::EncodableMap& args,

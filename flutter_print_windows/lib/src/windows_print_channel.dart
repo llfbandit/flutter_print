@@ -43,6 +43,13 @@ class WindowsPrintChannel {
   static Future<void> openInDefaultApp(String filePath) =>
       _channel.invokeMethod<void>('openInDefaultApp', {'filePath': filePath});
 
+  /// Returns the name of the default paper of [printerName], like `'A4'`, or
+  /// null when it is not a known size.
+  static Future<String?> getDefaultPaperSize(String printerName) =>
+      _channel.invokeMethod<String>('getDefaultPaperSize', {
+        'printerName': printerName,
+      });
+
   /// Returns the unprintable margins in mm of [printerName] for a paper size.
   static Future<PageMargins?> getMinimumMargins({
     required String printerName,

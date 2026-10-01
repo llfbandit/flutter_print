@@ -3,6 +3,7 @@ import 'dart:math' show min;
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_print_platform_interface/flutter_print_platform_interface.dart';
 
+import '../../windows_print_channel.dart';
 import '../l10n/print_localizations.dart';
 import '../print_dialog_utils.dart';
 
@@ -30,6 +31,9 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
   PageSize? _customPageSize;
   PrinterCapabilities? _caps;
   List<PageRange>? _presetRanges;
+
+  /// Use the printer's default paper until the caller or the user sets one.
+  late bool _followPrinterPaper;
 
   List<String> get _supportedPageSizeNames {
     final known = _caps?.supportedPageSizes.toSet() ?? const {};
@@ -83,6 +87,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
     final opts = widget.initialOptions;
     final ps = opts.pageSize;
     if (opts.pageRanges?.isNotEmpty ?? false) _presetRanges = opts.pageRanges;
+    _followPrinterPaper = ps == null;
 
     if (ps != null && !allPageSizes.contains(ps.name)) {
       _customPageSize = ps;
@@ -102,6 +107,33 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
   bool get _showPages {
     final count = widget.pageCount;
     return count != null && (count > 1 || _presetRanges != null);
+  }
+
+  // Counts printer changes, to drop the paper of an older printer.
+  int _printerChange = 0;
+
+  // Emits the printer once with its paper, so the preview is laid out once.
+  Future<void> _onPrinterChanged(PrinterInfo? info) async {
+    final change = ++_printerChange;
+    final printer = info?.address ?? info?.label;
+    PageSize? paper;
+    if (_followPrinterPaper && printer != null) {
+      try {
+        final name = await WindowsPrintChannel.getDefaultPaperSize(printer);
+        if (name != null) paper = _resolvePageSize(name);
+      } catch (_) {
+        // Keep the current paper.
+      }
+      if (!mounted || change != _printerChange) return;
+    }
+    _caps = info?.capabilities;
+    // Keep the paper the user picked meanwhile.
+    _emit(
+      _options.copyWith(
+        printerAddress: printer,
+        pageSize: _followPrinterPaper ? paper : null,
+      ),
+    );
   }
 
   void _emit(PrintOptions opts) {
@@ -124,12 +156,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
           _SectionLabel(l10n.printer),
           _PrinterSelector(
             initialAddress: _options.printerAddress,
-            onChanged: (info) {
-              _caps = info?.capabilities;
-              _emit(
-                _options.copyWith(printerAddress: info?.address ?? info?.label),
-              );
-            },
+            onChanged: _onPrinterChanged,
           ),
           if (_caps?.maxCopies != 1)
             ..._section(
@@ -177,8 +204,10 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
             _Choice(
               value: _options.pageSize?.name,
               items: {for (final n in _supportedPageSizeNames) n: n},
-              onChanged: (v) =>
-                  _emit(_options.copyWith(pageSize: _resolvePageSize(v))),
+              onChanged: (v) {
+                _followPrinterPaper = false;
+                _emit(_options.copyWith(pageSize: _resolvePageSize(v)));
+              },
             ),
           ),
           if (_caps?.supportsDuplex != false)
@@ -256,7 +285,9 @@ class _PrinterSelectorState extends State<_PrinterSelector> {
       final printers = await _api.listPrinters();
       if (!mounted) return;
 
+      // Keep the caller's printer when it exists, else take the default.
       final def =
+          printers.where((p) => _keyOf(p) == _selectedAddress).firstOrNull ??
           printers.where((p) => p.isDefault).firstOrNull ??
           printers.firstOrNull;
 
@@ -268,7 +299,10 @@ class _PrinterSelectorState extends State<_PrinterSelector> {
 
       widget.onChanged(_selectedInfo);
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (!mounted) return;
+      setState(() => _loading = false);
+      // Still emit, so the dialog shows the preview.
+      widget.onChanged(null);
     }
   }
 

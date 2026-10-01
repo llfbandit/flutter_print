@@ -52,6 +52,7 @@ class FlutterPrintPlugin : public flutter::Plugin, public FlutterPrintApi {
   void HandleRenderPageToPng(const flutter::EncodableMap& args, WinResult result);
   void HandleDecodeTextFile(const flutter::EncodableMap& args, WinResult result);
   void HandleGetMinimumMargins(const flutter::EncodableMap& args, WinResult result);
+  void HandleGetDefaultPaperSize(const flutter::EncodableMap& args, WinResult result);
   void HandleOpenInDefaultApp(const flutter::EncodableMap& args, WinResult result);
 
   // Set to false on destruction: worker threads then drop their reply.

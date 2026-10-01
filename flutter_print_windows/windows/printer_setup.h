@@ -31,6 +31,10 @@ inline constexpr std::pair<WORD, const char*> kKnownPapers[] = {
 // Returns the printer's default DEVMODE, or empty on error.
 std::vector<BYTE> GetDefaultDevMode(const std::wstring& printerName);
 
+// Returns the kKnownPapers name of the printer's default paper, or empty when
+// it is not one of them.
+std::string DefaultPaperName(const std::wstring& printerName);
+
 // Creates a printer DC with |options| applied, or with the printer defaults
 // when |options| is null. The caller must DeleteDC it.
 // |out_software_copies| gets the copies the driver can't make itself (1 when

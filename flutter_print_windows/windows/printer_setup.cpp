@@ -129,6 +129,17 @@ std::vector<BYTE> GetDefaultDevMode(const std::wstring& printerName) {
   return BuildDevMode(printerName, nullptr, nullptr);
 }
 
+std::string DefaultPaperName(const std::wstring& printerName) {
+  const std::vector<BYTE> buf = GetDefaultDevMode(printerName);
+  if (buf.empty()) return {};
+  const auto* dm = reinterpret_cast<const DEVMODE*>(buf.data());
+  if (!(dm->dmFields & DM_PAPERSIZE)) return {};
+  for (const auto& [id, name] : kKnownPapers) {
+    if (id == static_cast<WORD>(dm->dmPaperSize)) return name;
+  }
+  return {};
+}
+
 HDC CreatePrinterDC(const std::wstring& printerName,
                     const PrintOptions* options,
                     int* out_software_copies) {
