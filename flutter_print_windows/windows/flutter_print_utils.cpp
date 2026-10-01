@@ -56,4 +56,44 @@ DWORD ShellRun(const wchar_t* verb, const std::wstring& path,
   return 0;
 }
 
+SerialWorker::SerialWorker() : thread_([this] { Run(); }) {}
+
+SerialWorker::~SerialWorker() { Stop(); }
+
+void SerialWorker::Post(std::function<void()> task) {
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (stopping_) return;
+    tasks_.push_back(std::move(task));
+  }
+  cv_.notify_one();
+}
+
+void SerialWorker::Stop(std::function<void()> last) {
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (stopping_) return;
+    stopping_ = true;
+    tasks_.clear();
+    if (last) tasks_.push_back(std::move(last));
+  }
+  cv_.notify_one();
+  thread_.join();
+}
+
+void SerialWorker::Run() {
+  ComScope com;
+  for (;;) {
+    std::function<void()> task;
+    {
+      std::unique_lock<std::mutex> lock(mtx_);
+      cv_.wait(lock, [this] { return stopping_ || !tasks_.empty(); });
+      if (tasks_.empty()) return;
+      task = std::move(tasks_.front());
+      tasks_.pop_front();
+    }
+    task();
+  }
+}
+
 }  // namespace flutter_print

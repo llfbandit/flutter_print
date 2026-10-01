@@ -4,6 +4,9 @@ import 'package:flutter_print_platform_interface/flutter_print_platform_interfac
 /// How the plugin prints a file. It opens [other] files in their default app.
 enum FileKind { pdf, image, metafile, text, other }
 
+/// An open preview: a file laid out for a printer and paper.
+typedef PreviewSession = ({int id, int pageCount});
+
 class WindowsPrintChannel {
   static const _channel = MethodChannel('flutter_print_windows');
 
@@ -14,30 +17,40 @@ class WindowsPrintChannel {
     return FileKind.values.asNameMap()[name] ?? FileKind.other;
   }
 
-  /// Returns the page count of a PDF, image or metafile, or 0 on error.
-  static Future<int> getPageCount(String filePath, FileKind kind) async =>
-      await _channel.invokeMethod<int>('getPageCount', {
-        'filePath': filePath,
-        'kind': kind.name,
-      }) ??
-      0;
-
-  /// Renders a page (0-based) of a PDF, image or metafile to PNG, or returns
-  /// null.
-  static Future<Uint8List?> renderPageToPng(
+  /// Opens [filePath] for preview, laid out for the printer and paper of
+  /// [options]. Returns null when it can't be previewed. Close it with
+  /// [closePreview].
+  static Future<PreviewSession?> openPreview(
     String filePath,
     FileKind kind,
+    PrintOptions options,
+  ) async {
+    final result = await _channel.invokeMapMethod<String, int>('openPreview', {
+      'filePath': filePath,
+      'kind': kind.name,
+      ..._layoutArgs(options),
+    });
+    if (result == null) return null;
+    return (id: result['id']!, pageCount: result['pageCount']!);
+  }
+
+  /// Renders a page (0-based) of a preview as the printer prints it: the
+  /// whole sheet, fitted in [maxWidth] x [maxHeight] pixels, as PNG. Returns
+  /// null on error.
+  static Future<Uint8List?> renderPreviewPage(
+    int id,
     int pageIndex,
-    double dpi,
-  ) => _channel.invokeMethod<Uint8List>('renderPageToPng', {
-    'filePath': filePath,
-    'kind': kind.name,
+    int maxWidth,
+    int maxHeight,
+  ) => _channel.invokeMethod<Uint8List>('renderPreviewPage', {
+    'id': id,
     'pageIndex': pageIndex,
-    'dpi': dpi,
+    'maxWidth': maxWidth,
+    'maxHeight': maxHeight,
   });
 
-  static Future<String?> decodeTextFile(String filePath) =>
-      _channel.invokeMethod<String>('decodeTextFile', {'filePath': filePath});
+  static Future<void> closePreview(int id) =>
+      _channel.invokeMethod<void>('closePreview', {'id': id});
 
   /// Opens [filePath] in its default app, for files the dialog can't preview.
   static Future<void> openInDefaultApp(String filePath) =>
@@ -50,26 +63,12 @@ class WindowsPrintChannel {
         'printerName': printerName,
       });
 
-  /// Returns the unprintable margins in mm of [printerName] for a paper size.
-  static Future<PageMargins?> getMinimumMargins({
-    required String printerName,
-    String? paperSizeName,
-    double? paperWidth,
-    double? paperHeight,
-  }) async {
-    final result = await _channel
-        .invokeMapMethod<String, double>('getMinimumMargins', {
-          'printerName': printerName,
-          'paperSizeName': ?paperSizeName,
-          'paperWidth': ?paperWidth,
-          'paperHeight': ?paperHeight,
-        });
-    if (result == null) return null;
-    return PageMargins(
-      left: result['left'] ?? 0,
-      top: result['top'] ?? 0,
-      right: result['right'] ?? 0,
-      bottom: result['bottom'] ?? 0,
-    );
-  }
+  // The options that change how pages are laid out.
+  static Map<String, Object> _layoutArgs(PrintOptions options) => {
+    'printerName': ?options.printerAddress,
+    'paperSizeName': ?options.pageSize?.name,
+    'paperWidth': ?options.pageSize?.width,
+    'paperHeight': ?options.pageSize?.height,
+    'landscape': ?options.landscape,
+  };
 }

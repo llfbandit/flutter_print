@@ -3,6 +3,7 @@ import 'package:flutter_print_platform_interface/flutter_print_platform_interfac
 
 import '../windows_print_channel.dart';
 import 'l10n/print_localizations.dart';
+import 'print_dialog_utils.dart';
 import 'widgets/print_preview_panel.dart';
 import 'widgets/print_settings_panel.dart';
 
@@ -102,33 +103,62 @@ class _PrintDialogState extends State<_PrintDialog> {
   // A preset range stays invalid until the page count confirms it.
   late bool _pagesValid;
 
-  // Page count, loaded once for both panels. Null while loading, 0 when
-  // unknown (text files are paged at print time).
+  // The file laid out for the current printer and paper, kept open for fast
+  // page turns. Null while opening or when it can't be previewed.
+  PreviewSession? _preview;
+
+  // Page count for both panels: text pages depend on the layout. Null while
+  // loading, 0 when unknown.
   int? _pageCount;
+
+  // Drop previews that open after a newer request.
+  int _previewRequest = 0;
 
   @override
   void initState() {
     super.initState();
     _options = widget.initialOptions ?? PrintOptions();
     _pagesValid = _options.pageRanges?.isEmpty ?? true;
-    if (widget.kind == FileKind.text) {
-      _pageCount = 0;
-    } else {
-      _loadPageCount();
-    }
   }
 
-  Future<void> _loadPageCount() async {
-    var count = 0;
+  @override
+  void dispose() {
+    final preview = _preview;
+    if (preview != null) WindowsPrintChannel.closePreview(preview.id);
+    super.dispose();
+  }
+
+  // Keeps the old preview until the new one is open, so the panels don't
+  // flash.
+  Future<void> _openPreview() async {
+    final request = ++_previewRequest;
+    PreviewSession? preview;
     try {
-      count = await WindowsPrintChannel.getPageCount(
+      preview = await WindowsPrintChannel.openPreview(
         widget.filePath,
         widget.kind,
+        _options,
       );
     } catch (_) {
       // Show the preview as unavailable.
     }
-    if (mounted) setState(() => _pageCount = count);
+    if (!mounted || request != _previewRequest) {
+      if (preview != null) WindowsPrintChannel.closePreview(preview.id);
+      return;
+    }
+    final old = _preview;
+    setState(() {
+      _preview = preview;
+      _pageCount = preview?.pageCount ?? 0;
+    });
+    if (old != null) WindowsPrintChannel.closePreview(old.id);
+  }
+
+  void _onOptionsChanged(PrintOptions options) {
+    // Lay out on the first options, which name the printer and its paper.
+    final relayout = _previewRequest == 0 || !sameLayout(options, _options);
+    setState(() => _options = options);
+    if (relayout) _openPreview();
   }
 
   @override
@@ -153,7 +183,7 @@ class _PrintDialogState extends State<_PrintDialog> {
               child: PrintSettingsPanel(
                 pageCount: _pageCount,
                 initialOptions: _options,
-                onOptionsChanged: (opts) => setState(() => _options = opts),
+                onOptionsChanged: _onOptionsChanged,
                 onPagesValidChanged: (valid) =>
                     setState(() => _pagesValid = valid),
               ),
@@ -166,8 +196,7 @@ class _PrintDialogState extends State<_PrintDialog> {
             const SizedBox(width: 16),
             Expanded(
               child: PrintPreviewPanel(
-                filePath: widget.filePath,
-                kind: widget.kind,
+                preview: _preview,
                 pageCount: _pageCount,
                 options: _options,
               ),

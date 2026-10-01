@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
-#include <optional>
 
 
 namespace flutter_print {
@@ -148,44 +147,11 @@ HDC CreatePrinterDC(const std::wstring& printerName,
                    dm.empty() ? nullptr : reinterpret_cast<DEVMODE*>(dm.data()));
 }
 
-std::optional<PrinterMargins> GetMinimumMargins(const std::wstring& printerName,
-                                                const std::string& paperSizeName,
-                                                double paperWidthMm,
-                                                double paperHeightMm) {
-  // Build the DEVMODE like the print path does. An information context is
-  // enough for GetDeviceCaps and cheaper than a DC.
-  PrintOptions options;
-  // Named papers take their orientation from the oriented width and height.
-  options.set_landscape(paperWidthMm > paperHeightMm);
-  options.set_page_size(PageSize(paperSizeName, &paperWidthMm, &paperHeightMm));
-  std::vector<BYTE> dm = BuildDevMode(printerName, &options, nullptr);
-  HDC hdc = CreateICW(L"WINSPOOL", printerName.c_str(), nullptr,
-                      dm.empty() ? nullptr : reinterpret_cast<DEVMODE*>(dm.data()));
-  if (!hdc) return std::nullopt;
-
-  // The printable area starts at PHYSICALOFFSET and has the HORZRES/VERTRES
-  // size, in the PHYSICALWIDTH/HEIGHT sheet.
-  const int offX  = GetDeviceCaps(hdc, PHYSICALOFFSETX);
-  const int offY  = GetDeviceCaps(hdc, PHYSICALOFFSETY);
-  const int physW = GetDeviceCaps(hdc, PHYSICALWIDTH);
-  const int physH = GetDeviceCaps(hdc, PHYSICALHEIGHT);
-  const int resW  = GetDeviceCaps(hdc, HORZRES);
-  const int resH  = GetDeviceCaps(hdc, VERTRES);
-  const int dpiX  = GetDeviceCaps(hdc, LOGPIXELSX);
-  const int dpiY  = GetDeviceCaps(hdc, LOGPIXELSY);
-  DeleteDC(hdc);
-
-  if (dpiX <= 0 || dpiY <= 0) return std::nullopt;
-
-  constexpr double kMmPerInch = 25.4;
-  const double mmX = kMmPerInch / dpiX;
-  const double mmY = kMmPerInch / dpiY;
-  PrinterMargins m;
-  m.left   = offX * mmX;
-  m.top    = offY * mmY;
-  m.right  = (physW - resW - offX) * mmX;
-  m.bottom = (physH - resH - offY) * mmY;
-  return m;
+HDC CreatePrinterIC(const std::wstring& printerName,
+                    const PrintOptions* options) {
+  std::vector<BYTE> dm = BuildDevMode(printerName, options, nullptr);
+  return CreateICW(L"WINSPOOL", printerName.c_str(), nullptr,
+                   dm.empty() ? nullptr : reinterpret_cast<DEVMODE*>(dm.data()));
 }
 
 }  // namespace flutter_print

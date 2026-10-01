@@ -9,10 +9,13 @@
 #include <fpdfview.h>
 #include <algorithm>
 #include <cctype>
+#include <climits>
+#include <cmath>
 #include <memory>
 #include <mutex>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 
 
 namespace flutter_print {
@@ -30,17 +33,61 @@ struct PdfCloser {
 template <typename T>
 using PdfPtr = std::unique_ptr<std::remove_pointer_t<T>, PdfCloser>;
 
-// Opens a PDF, or returns null. Hold g_pdfium_mtx.
-static PdfPtr<FPDF_DOCUMENT> OpenPdf(const std::wstring& path) {
-  static std::once_flag init;
-  std::call_once(init, [] {
-    FPDF_LIBRARY_CONFIG cfg = {};
-    cfg.version = 2;
-    FPDF_InitLibraryWithConfig(&cfg);
-  });
-  return PdfPtr<FPDF_DOCUMENT>(
-      FPDF_LoadDocument(WideToUtf8(path.c_str()).c_str(), nullptr));
-}
+// An open PDF. PDFium reads it through our own handle, which lets other apps
+// write, rename or delete the file meanwhile. Hold g_pdfium_mtx while using
+// or destroying it.
+class PdfFile {
+ public:
+  // Opens a PDF, or returns null.
+  static std::unique_ptr<PdfFile> Open(const std::wstring& path) {
+    static std::once_flag init;
+    std::call_once(init, [] {
+      FPDF_LIBRARY_CONFIG cfg = {};
+      cfg.version = 2;
+      FPDF_InitLibraryWithConfig(&cfg);
+    });
+    std::unique_ptr<PdfFile> f(new PdfFile);
+    f->file_ = CreateFileW(path.c_str(), GENERIC_READ,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    LARGE_INTEGER size = {};
+    if (f->file_ == INVALID_HANDLE_VALUE || !GetFileSizeEx(f->file_, &size) ||
+        size.QuadPart > ULONG_MAX)
+      return nullptr;
+    f->access_.m_FileLen  = static_cast<unsigned long>(size.QuadPart);
+    f->access_.m_GetBlock = &PdfFile::GetBlock;
+    f->access_.m_Param    = f->file_;
+    f->doc_.reset(FPDF_LoadCustomDocument(&f->access_, nullptr));
+    if (!f->doc_) return nullptr;
+    return f;
+  }
+
+  ~PdfFile() {
+    doc_.reset();
+    if (file_ != INVALID_HANDLE_VALUE) CloseHandle(file_);
+  }
+  PdfFile(const PdfFile&) = delete;
+  PdfFile& operator=(const PdfFile&) = delete;
+
+  FPDF_DOCUMENT get() const { return doc_.get(); }
+
+ private:
+  PdfFile() = default;
+
+  // Reads |size| bytes at |pos| for PDFium. Returns 0 on error.
+  static int GetBlock(void* param, unsigned long pos, unsigned char* buf,
+                      unsigned long size) {
+    OVERLAPPED at = {};
+    at.Offset = pos;
+    DWORD got = 0;
+    return ReadFile(static_cast<HANDLE>(param), buf, size, &got, &at) &&
+           got == size;
+  }
+
+  HANDLE file_ = INVALID_HANDLE_VALUE;
+  FPDF_FILEACCESS access_ = {};
+  PdfPtr<FPDF_DOCUMENT> doc_;
+};
 
 // GDI+ tokens have no ref count, so a start and stop per call races between
 // the print and preview threads. Start GDI+ once and never stop it.
@@ -200,21 +247,6 @@ static bool IsMetafile(const std::vector<uint8_t>& b) {
   return b.size() >= 4 && u32(0) == 0x9AC6CDD7;
 }
 
-// Draws |img| fitted and centered in the printable area.
-static void DrawFitted(HDC hdc, Gdiplus::Image* img) {
-  const int pw = GetDeviceCaps(hdc, HORZRES);
-  const int ph = GetDeviceCaps(hdc, VERTRES);
-  const UINT iw = img->GetWidth(), ih = img->GetHeight();
-  if (iw == 0 || ih == 0) return;
-  const float s = std::min(static_cast<float>(pw) / iw,
-                           static_cast<float>(ph) / ih);
-  const int dw = static_cast<int>(iw * s);
-  const int dh = static_cast<int>(ih * s);
-  Gdiplus::Graphics g(hdc);
-  g.SetPageUnit(Gdiplus::UnitPixel);
-  g.DrawImage(img, (pw - dw) / 2, (ph - dh) / 2, dw, dh);
-}
-
 // Returns the CLSID of the GDI+ encoder for |mimeType|, e.g. L"image/png".
 static HRESULT GetEncoderClsid(const WCHAR* mimeType, CLSID* pClsid) {
   UINT num = 0, size = 0;
@@ -257,19 +289,125 @@ static std::vector<uint8_t> EncodePng(Gdiplus::Bitmap& bmp) {
   return png;
 }
 
-// Draws |img| scaled by |scale| on white and encodes it as PNG.
-static std::vector<uint8_t> ImageToPng(Gdiplus::Image* img, double scale) {
-  const int w = std::max(1, static_cast<int>(img->GetWidth() * scale));
-  const int h = std::max(1, static_cast<int>(img->GetHeight() * scale));
-  Gdiplus::Bitmap out(w, h, PixelFormat32bppARGB);
-  if (out.GetLastStatus() != Gdiplus::Ok) return {};
-  {
-    Gdiplus::Graphics g(&out);
-    g.Clear(Gdiplus::Color(255, 255, 255));
-    g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-    g.DrawImage(img, 0, 0, w, h);
+// ---------------------------------------------------------------------------
+// Text
+// ---------------------------------------------------------------------------
+
+// Decodes UTF-16 LE/BE (with BOM), UTF-8 (with or without BOM), else ANSI.
+static std::wstring DecodeTextBytes(const std::vector<uint8_t>& b) {
+  const size_t n = b.size();
+  if (n == 0) return {};
+
+  if (n >= 2 && b[0] == 0xFF && b[1] == 0xFE)
+    return std::wstring(reinterpret_cast<const wchar_t*>(b.data() + 2),
+                        (n - 2) / 2);
+
+  if (n >= 2 && b[0] == 0xFE && b[1] == 0xFF) {
+    // Swap the bytes of each UTF-16 BE unit.
+    std::wstring w((n - 2) / 2, L'\0');
+    const uint8_t* src = b.data() + 2;
+    for (size_t i = 0; i < w.size(); ++i)
+      w[i] = static_cast<wchar_t>((src[i * 2] << 8) | src[i * 2 + 1]);
+    return w;
   }
-  return EncodePng(out);
+
+  const size_t off =
+      (n >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF) ? 3 : 0;
+  const std::string_view raw(reinterpret_cast<const char*>(b.data()) + off,
+                             n - off);
+  std::wstring w = MultiByteToWide(raw, CP_UTF8, MB_ERR_INVALID_CHARS);
+  return w.empty() ? MultiByteToWide(raw, CP_ACP) : w;
+}
+
+// Replaces each tab with spaces up to the next multiple of 4 columns.
+static std::wstring ExpandTabs(std::wstring text) {
+  if (text.find(L'\t') == std::wstring::npos) return text;
+  std::wstring out;
+  out.reserve(text.size());
+  size_t col = 0;
+  for (wchar_t ch : text) {
+    if (ch == L'\t') {
+      const size_t n = 4 - col % 4;
+      out.append(n, L' ');
+      col += n;
+    } else {
+      out += ch;
+      col = (ch == L'\r' || ch == L'\n') ? 0 : col + 1;
+    }
+  }
+  return out;
+}
+
+// Widths of characters in the font selected in a DC. GDI sums the widths of
+// the characters of a string, so asking it once per character is enough.
+class CharWidths {
+ public:
+  explicit CharWidths(HDC hdc) : hdc_(hdc), widths_(0x10000, -1) {}
+
+  // Counts the characters at the start of |s| that fit in |width| pixels.
+  // Keeps surrogate pairs whole.
+  size_t Fit(std::wstring_view s, int width) {
+    int used = 0;
+    for (size_t i = 0; i < s.size();) {
+      const bool pair = IS_HIGH_SURROGATE(s[i]) && i + 1 < s.size() &&
+                        IS_LOW_SURROGATE(s[i + 1]);
+      const int w = pair ? PairWidth(s[i], s[i + 1]) : Width(s[i]);
+      if (used + w > width) return i;
+      used += w;
+      i += pair ? 2 : 1;
+    }
+    return s.size();
+  }
+
+ private:
+  int Width(wchar_t c) {
+    int& w = widths_[c];
+    if (w < 0) w = Measure(&c, 1);
+    return w;
+  }
+
+  int PairWidth(wchar_t hi, wchar_t lo) {
+    const uint32_t key = (static_cast<uint32_t>(hi) << 16) | lo;
+    const auto it = pairs_.find(key);
+    if (it != pairs_.end()) return it->second;
+    const wchar_t pair[] = {hi, lo};
+    return pairs_[key] = Measure(pair, 2);
+  }
+
+  int Measure(const wchar_t* s, int n) const {
+    SIZE sz = {};
+    GetTextExtentPoint32W(hdc_, s, n, &sz);
+    return sz.cx;
+  }
+
+  HDC hdc_;
+  std::vector<int> widths_;
+  std::unordered_map<uint32_t, int> pairs_;
+};
+
+// A line of a text page: a range of the document text.
+struct TextSpan {
+  size_t start = 0;
+  size_t length = 0;
+};
+
+// Adds |line|, which starts at |start| in the text, to |lines|, wrapped at
+// |width| pixels, at a space when possible.
+static void WrapLine(CharWidths& widths, std::wstring_view line, size_t start,
+                     int width, std::vector<TextSpan>& lines) {
+  if (line.empty()) {
+    lines.push_back({start, 0});
+    return;
+  }
+  for (size_t pos = 0; pos < line.size();) {
+    size_t advance = std::max<size_t>(widths.Fit(line.substr(pos), width), 1);
+    if (pos + advance < line.size()) {
+      const size_t sp = line.substr(pos, advance).rfind(L' ');
+      if (sp != std::wstring_view::npos && sp > 0) advance = sp + 1;
+    }
+    lines.push_back({start + pos, advance});
+    pos += advance;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -308,8 +446,6 @@ static bool IsRichText(std::string_view text) {
   return false;
 }
 
-static std::wstring DecodeTextBytes(const std::vector<uint8_t>& b);
-
 FileKind DetectFileKind(const std::wstring& path) {
   const auto bytes = ReadBytes(path, 8192);
   if (!bytes) return FileKind::kOther;
@@ -323,7 +459,7 @@ FileKind DetectFileKind(const std::wstring& path) {
   if (pdf == 0) return FileKind::kPdf;
   if (pdf != std::string_view::npos) {
     std::lock_guard<std::mutex> lock(g_pdfium_mtx);
-    if (OpenPdf(path)) return FileKind::kPdf;
+    if (PdfFile::Open(path)) return FileKind::kPdf;
   }
   if (IsMetafile(head)) return FileKind::kMetafile;
 
@@ -337,6 +473,299 @@ FileKind DetectFileKind(const std::wstring& path) {
 
   ComScope com;
   return OpenImage(path) ? FileKind::kImage : FileKind::kOther;
+}
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
+
+// A printer page, and where it lands on the DC that gets the drawing.
+struct PageTarget {
+  HDC hdc = nullptr;
+  // Printer metrics in printer pixels: the printable area has the res size,
+  // at the off offset in the phys sheet.
+  int dpiX = 0, dpiY = 0;
+  int resW = 0, resH = 0;
+  int physW = 0, physH = 0;
+  int offX = 0, offY = 0;
+  // Target pixels per printer pixel, and where the printable area starts on
+  // the target. Print uses 1 and 0: it draws on the printer DC itself.
+  double scaleX = 1, scaleY = 1;
+  int originX = 0, originY = 0;
+
+  // Maps a rect in printer pixels, from the printable area corner, to the
+  // target.
+  Gdiplus::Rect Map(double x, double y, double w, double h) const {
+    return Gdiplus::Rect(originX + static_cast<INT>(std::lround(x * scaleX)),
+                         originY + static_cast<INT>(std::lround(y * scaleY)),
+                         static_cast<INT>(std::lround(w * scaleX)),
+                         static_cast<INT>(std::lround(h * scaleY)));
+  }
+};
+
+static PageTarget PrinterTarget(HDC hdc) {
+  PageTarget t;
+  t.hdc   = hdc;
+  t.dpiX  = GetDeviceCaps(hdc, LOGPIXELSX);
+  t.dpiY  = GetDeviceCaps(hdc, LOGPIXELSY);
+  t.resW  = GetDeviceCaps(hdc, HORZRES);
+  t.resH  = GetDeviceCaps(hdc, VERTRES);
+  t.physW = GetDeviceCaps(hdc, PHYSICALWIDTH);
+  t.physH = GetDeviceCaps(hdc, PHYSICALHEIGHT);
+  t.offX  = GetDeviceCaps(hdc, PHYSICALOFFSETX);
+  t.offY  = GetDeviceCaps(hdc, PHYSICALOFFSETY);
+  return t;
+}
+
+// Draws |img| fitted and centered in the printable area.
+static void DrawFitted(const PageTarget& t, Gdiplus::Image* img) {
+  const UINT iw = img->GetWidth(), ih = img->GetHeight();
+  if (iw == 0 || ih == 0) return;
+  const double s = std::min(static_cast<double>(t.resW) / iw,
+                            static_cast<double>(t.resH) / ih);
+  const double dw = iw * s, dh = ih * s;
+  Gdiplus::Graphics g(t.hdc);
+  g.SetPageUnit(Gdiplus::UnitPixel);
+  g.DrawImage(img, t.Map((t.resW - dw) / 2, (t.resH - dh) / 2, dw, dh));
+}
+
+// A file laid out on the pages of a printer.
+class Document {
+ public:
+  virtual ~Document() = default;
+  virtual int PageCount() const = 0;
+  // Draws a page (0-based). Returns false when it can't.
+  virtual bool DrawPage(const PageTarget& t, int index) = 0;
+};
+
+// Each call locks PDFium, so an open document doesn't block other threads.
+class PdfDocument : public Document {
+ public:
+  static std::unique_ptr<Document> Open(const std::wstring& path) {
+    std::lock_guard<std::mutex> lock(g_pdfium_mtx);
+    auto file = PdfFile::Open(path);
+    if (!file) return nullptr;
+    return std::unique_ptr<Document>(new PdfDocument(std::move(file)));
+  }
+
+  ~PdfDocument() override {
+    std::lock_guard<std::mutex> lock(g_pdfium_mtx);
+    file_.reset();
+  }
+
+  int PageCount() const override {
+    std::lock_guard<std::mutex> lock(g_pdfium_mtx);
+    return FPDF_GetPageCount(file_->get());
+  }
+
+  bool DrawPage(const PageTarget& t, int index) override {
+    std::lock_guard<std::mutex> lock(g_pdfium_mtx);
+    PdfPtr<FPDF_PAGE> page(FPDF_LoadPage(file_->get(), index));
+    if (!page) return false;
+    // Draw from the sheet corner at true size; shrink pages too large for
+    // the sheet.
+    const double w = FPDF_GetPageWidth(page.get()) * t.dpiX / 72.0;
+    const double h = FPDF_GetPageHeight(page.get()) * t.dpiY / 72.0;
+    const double s = std::min({1.0, t.physW / w, t.physH / h});
+    const Gdiplus::Rect r = t.Map(-t.offX, -t.offY, w * s, h * s);
+    FPDF_RenderPage(t.hdc, page.get(), r.X, r.Y, r.Width, r.Height, 0,
+                    FPDF_ANNOT | FPDF_PRINTING);
+    return true;
+  }
+
+ private:
+  explicit PdfDocument(std::unique_ptr<PdfFile> file) : file_(std::move(file)) {}
+  std::unique_ptr<PdfFile> file_;
+};
+
+// Each page fitted and centered in the printable area.
+class ImageDocument : public Document {
+ public:
+  static std::unique_ptr<Document> Open(const std::wstring& path) {
+    std::unique_ptr<ImageDocument> d(new ImageDocument);
+    auto img = OpenImage(path);
+    if (!img) return nullptr;
+    d->img_ = std::move(*img);
+    return d;
+  }
+
+  int PageCount() const override { return static_cast<int>(img_.pageCount); }
+
+  bool DrawPage(const PageTarget& t, int index) override {
+    // Decode at the target size when it is smaller, as for the preview. Keep
+    // the last decoded page, for copies of a single page.
+    const bool shrink = t.scaleX < 1 || t.scaleY < 1;
+    const UINT maxSide =
+        shrink ? static_cast<UINT>(std::max(t.resW * t.scaleX,
+                                            t.resH * t.scaleY))
+               : 0;
+    if (index != cached_ || maxSide != cachedSide_) {
+      bmp_ = DecodePage(img_, static_cast<UINT>(index), maxSide);
+      cached_ = index;
+      cachedSide_ = maxSide;
+    }
+    if (!bmp_) return false;
+    DrawFitted(t, bmp_.get());
+    return true;
+  }
+
+ private:
+  ImageDocument() = default;
+  // Declared first, so COM outlives the decoder.
+  ComScope com_;
+  WicImage img_;
+  // The decoded page, and the size it was decoded for (0 for full size).
+  int cached_ = -1;
+  UINT cachedSide_ = 0;
+  std::unique_ptr<Gdiplus::Bitmap> bmp_;
+};
+
+// One page, fitted and centered in the printable area.
+class MetafileDocument : public Document {
+ public:
+  static std::unique_ptr<Document> Open(const std::wstring& path) {
+    auto d = std::make_unique<MetafileDocument>(path);
+    if (d->metafile_.GetLastStatus() != Gdiplus::Ok) return nullptr;
+    return d;
+  }
+
+  explicit MetafileDocument(const std::wstring& path)
+      : metafile_(path.c_str()) {}
+
+  int PageCount() const override { return 1; }
+
+  bool DrawPage(const PageTarget& t, int) override {
+    DrawFitted(t, &metafile_);
+    return true;
+  }
+
+ private:
+  Gdiplus::Metafile metafile_;
+};
+
+// Text in 10 pt Consolas with 1-inch margins, long lines wrapped.
+class TextDocument : public Document {
+ public:
+  // Lays |text| out with the metrics of |ref|, the printer DC or IC.
+  TextDocument(HDC ref, std::wstring text)
+      : text_(ExpandTabs(std::move(text))) {
+    const int dpiX = GetDeviceCaps(ref, LOGPIXELSX);
+    const int dpiY = GetDeviceCaps(ref, LOGPIXELSY);
+    marginX_ = dpiX;
+    marginY_ = dpiY;
+    const int contentW = GetDeviceCaps(ref, HORZRES) - 2 * marginX_;
+    const int contentH = GetDeviceCaps(ref, VERTRES) - 2 * marginY_;
+
+    // DEFAULT_CHARSET turns on font linking: GDI picks a fallback font for
+    // each glyph Consolas lacks (CJK, Arabic…). Printers ignore the quality,
+    // which smooths the preview.
+    LOGFONTW lf = {};
+    lf.lfHeight         = -MulDiv(10, dpiY, 72);
+    lf.lfCharSet        = DEFAULT_CHARSET;
+    lf.lfQuality        = CLEARTYPE_NATURAL_QUALITY;
+    lf.lfPitchAndFamily = FIXED_PITCH | FF_MODERN;
+    wcscpy_s(lf.lfFaceName, LF_FACESIZE, L"Consolas");
+    font_ = CreateFontIndirectW(&lf);
+    HGDIOBJ old = SelectObject(ref, font_);
+
+    TEXTMETRICW tm = {};
+    GetTextMetricsW(ref, &tm);
+    lineH_        = tm.tmHeight + tm.tmExternalLeading;
+    linesPerPage_ = (contentH > 0 && lineH_ > 0) ? contentH / lineH_ : 1;
+
+    CharWidths widths(ref);
+    const std::wstring_view all(text_);
+    for (size_t pos = 0; pos < all.size();) {
+      const size_t nl = all.find_first_of(L"\r\n", pos);
+      const size_t end = std::min(nl, all.size());
+      WrapLine(widths, all.substr(pos, end - pos), pos, contentW, lines_);
+      if (nl == std::wstring_view::npos) break;
+      pos = nl + (all.substr(nl, 2) == L"\r\n" ? 2 : 1);
+    }
+    SelectObject(ref, old);
+  }
+
+  ~TextDocument() override { DeleteObject(font_); }
+  TextDocument(const TextDocument&) = delete;
+  TextDocument& operator=(const TextDocument&) = delete;
+
+  int PageCount() const override {
+    const int total = static_cast<int>(lines_.size());
+    return total == 0 ? 1 : (total + linesPerPage_ - 1) / linesPerPage_;
+  }
+
+  bool DrawPage(const PageTarget& t, int index) override {
+    // Scale the printer-size font with the page, so lines break as in print.
+    const bool mapped = t.scaleX != 1 || t.scaleY != 1 || t.originX != 0 ||
+                        t.originY != 0;
+    if (mapped) {
+      const XFORM xf = {static_cast<FLOAT>(t.scaleX), 0, 0,
+                        static_cast<FLOAT>(t.scaleY),
+                        static_cast<FLOAT>(t.originX),
+                        static_cast<FLOAT>(t.originY)};
+      SetGraphicsMode(t.hdc, GM_ADVANCED);
+      SetWorldTransform(t.hdc, &xf);
+    }
+    HGDIOBJ old = SelectObject(t.hdc, font_);
+    const int total = static_cast<int>(lines_.size());
+    const int first = index * linesPerPage_;
+    const int end   = std::min(first + linesPerPage_, total);
+    for (int li = first; li < end; ++li) {
+      const TextSpan& ln = lines_[li];
+      if (ln.length > 0)
+        TextOutW(t.hdc, marginX_, marginY_ + (li - first) * lineH_,
+                 text_.data() + ln.start, static_cast<int>(ln.length));
+    }
+    SelectObject(t.hdc, old);
+    if (mapped) ModifyWorldTransform(t.hdc, nullptr, MWT_IDENTITY);
+    return true;
+  }
+
+ private:
+  // The text with tabs expanded, and its wrapped lines.
+  std::wstring text_;
+  std::vector<TextSpan> lines_;
+  HFONT font_ = nullptr;
+  int marginX_ = 0, marginY_ = 0;
+  int lineH_ = 0, linesPerPage_ = 1;
+};
+
+// Opens |path| laid out for the printer of |ref|. On error, sets |error| and
+// returns null.
+static std::unique_ptr<Document> OpenDocument(
+    HDC ref, const std::wstring& path, FileKind kind,
+    std::optional<FlutterError>& error) {
+  EnsureGdiplusInit();
+  const std::string name = WideToUtf8(path.c_str());
+  switch (kind) {
+    case FileKind::kPdf:
+      if (auto d = PdfDocument::Open(path)) return d;
+      error = FlutterError("PDF_ERROR", "Cannot open PDF: " + name);
+      return nullptr;
+    case FileKind::kImage:
+      if (auto d = ImageDocument::Open(path)) return d;
+      error = FlutterError("IMAGE_ERROR", "Cannot decode image: " + name);
+      return nullptr;
+    case FileKind::kMetafile:
+      if (auto d = MetafileDocument::Open(path)) return d;
+      error = FlutterError("IMAGE_ERROR", "Cannot open metafile: " + name);
+      return nullptr;
+    case FileKind::kText: {
+      auto bytes = ReadBytes(path);
+      if (!bytes) {
+        error = FlutterError("FILE_ERROR", "Cannot read file: " + name);
+        return nullptr;
+      }
+      // Free the bytes before the layout.
+      std::wstring text = DecodeTextBytes(*bytes);
+      bytes.reset();
+      return std::make_unique<TextDocument>(ref, std::move(text));
+    }
+    case FileKind::kOther:
+      break;
+  }
+  error = FlutterError("UNSUPPORTED_FILE", "File type not supported for printing");
+  return nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -361,24 +790,25 @@ static std::optional<FlutterError> CheckAnyPageSelected(
   return FlutterError("INVALID_PAGE_RANGE", "Page ranges select no page");
 }
 
-// Prints the pages that |ranges| selects, |copies| times, as one job.
-// |drawPage| draws the 0-based page it gets, and returns false when it can't:
-// the job is then canceled, not printed with a blank page.
-template <typename DrawPage>
-static std::optional<FlutterError> PrintPages(HDC hdc,
-                                              const std::wstring& docName,
-                                              int pageCount, int copies,
-                                              const PageRanges& ranges,
-                                              DrawPage drawPage) {
+std::optional<FlutterError> RenderToDC(HDC hdc, const std::wstring& wPath,
+                                       FileKind kind, int copies,
+                                       const PageRanges& ranges) {
+  std::optional<FlutterError> error;
+  auto doc = OpenDocument(hdc, wPath, kind, error);
+  if (!doc) return error;
+
   // Check first, so an empty selection never sends a blank job.
+  const int pageCount = doc->PageCount();
   if (auto err = CheckAnyPageSelected(pageCount, ranges)) return err;
 
   DOCINFOW di = {};
   di.cbSize      = sizeof(di);
-  di.lpszDocName = docName.c_str();
+  di.lpszDocName = wPath.c_str();
   if (StartDocW(hdc, &di) <= 0)
     return FlutterError("PRINT_ERROR", "StartDoc failed");
 
+  // Cancel the job when a page fails, rather than print it blank.
+  const PageTarget target = PrinterTarget(hdc);
   for (int c = 0; c < copies; ++c) {
     for (int i = 0; i < pageCount; ++i) {
       if (!PageSelected(i + 1, ranges)) continue;
@@ -386,7 +816,7 @@ static std::optional<FlutterError> PrintPages(HDC hdc,
         AbortDoc(hdc);
         return FlutterError("PRINT_ERROR", "StartPage failed");
       }
-      if (!drawPage(i)) {
+      if (!doc->DrawPage(target, i)) {
         AbortDoc(hdc);
         return FlutterError("PRINT_ERROR",
                             "Cannot draw page " + std::to_string(i + 1));
@@ -396,222 +826,6 @@ static std::optional<FlutterError> PrintPages(HDC hdc,
   }
   EndDoc(hdc);
   return std::nullopt;
-}
-
-// Prints each page fitted and centered in the printable area.
-static std::optional<FlutterError> RenderImageToDC(HDC hdc,
-                                                   const std::wstring& path,
-                                                   int copies,
-                                                   const PageRanges& ranges) {
-  EnsureGdiplusInit();
-  ComScope com;
-  auto img = OpenImage(path);
-  if (!img)
-    return FlutterError("IMAGE_ERROR",
-                        "Cannot decode image: " + WideToUtf8(path.c_str()));
-
-  // Keep the last decoded page, for copies of a single page.
-  int cached = -1;
-  std::unique_ptr<Gdiplus::Bitmap> bmp;
-  return PrintPages(hdc, path, static_cast<int>(img->pageCount), copies, ranges,
-                    [&](int i) {
-                      if (i != cached) {
-                        bmp = DecodePage(*img, i);
-                        cached = i;
-                      }
-                      if (!bmp) return false;
-                      DrawFitted(hdc, bmp.get());
-                      return true;
-                    });
-}
-
-static std::optional<FlutterError> RenderMetafileToDC(HDC hdc,
-                                                      const std::wstring& path,
-                                                      int copies,
-                                                      const PageRanges& ranges) {
-  EnsureGdiplusInit();
-  Gdiplus::Metafile metafile(path.c_str());
-  if (metafile.GetLastStatus() != Gdiplus::Ok)
-    return FlutterError("IMAGE_ERROR",
-                        "Cannot open metafile: " + WideToUtf8(path.c_str()));
-  return PrintPages(hdc, path, 1, copies, ranges, [&](int) {
-    DrawFitted(hdc, &metafile);
-    return true;
-  });
-}
-
-static std::optional<FlutterError> RenderPdfToDC(HDC hdc,
-                                                 const std::wstring& path,
-                                                 int copies,
-                                                 const PageRanges& ranges) {
-  std::lock_guard<std::mutex> lock(g_pdfium_mtx);
-  auto doc = OpenPdf(path);
-  if (!doc)
-    return FlutterError("PDF_ERROR",
-                        "Cannot open PDF: " + WideToUtf8(path.c_str()));
-
-  // PDF points to device pixels.
-  const double scaleX = GetDeviceCaps(hdc, LOGPIXELSX) / 72.0;
-  const double scaleY = GetDeviceCaps(hdc, LOGPIXELSY) / 72.0;
-  const int physW = GetDeviceCaps(hdc, PHYSICALWIDTH);
-  const int physH = GetDeviceCaps(hdc, PHYSICALHEIGHT);
-  const int offX  = GetDeviceCaps(hdc, PHYSICALOFFSETX);
-  const int offY  = GetDeviceCaps(hdc, PHYSICALOFFSETY);
-
-  return PrintPages(
-      hdc, path, FPDF_GetPageCount(doc.get()), copies, ranges, [&](int i) {
-        PdfPtr<FPDF_PAGE> page(FPDF_LoadPage(doc.get(), i));
-        if (!page) return false;
-        const int w = static_cast<int>(FPDF_GetPageWidth(page.get()) * scaleX);
-        const int h = static_cast<int>(FPDF_GetPageHeight(page.get()) * scaleY);
-        // Draw from the sheet corner at true size; shrink pages too large
-        // for the sheet.
-        const double s = std::min({1.0, static_cast<double>(physW) / w,
-                                   static_cast<double>(physH) / h});
-        FPDF_RenderPage(hdc, page.get(), -offX, -offY,
-                        static_cast<int>(w * s), static_cast<int>(h * s), 0,
-                        FPDF_ANNOT | FPDF_PRINTING);
-        return true;
-      });
-}
-
-// Decodes UTF-16 LE/BE (with BOM), UTF-8 (with or without BOM), else ANSI.
-static std::wstring DecodeTextBytes(const std::vector<uint8_t>& b) {
-  const size_t n = b.size();
-  if (n == 0) return {};
-
-  if (n >= 2 && b[0] == 0xFF && b[1] == 0xFE)
-    return std::wstring(reinterpret_cast<const wchar_t*>(b.data() + 2),
-                        (n - 2) / 2);
-
-  if (n >= 2 && b[0] == 0xFE && b[1] == 0xFF) {
-    // Swap the bytes of each UTF-16 BE unit.
-    std::wstring w((n - 2) / 2, L'\0');
-    const uint8_t* src = b.data() + 2;
-    for (size_t i = 0; i < w.size(); ++i)
-      w[i] = static_cast<wchar_t>((src[i * 2] << 8) | src[i * 2 + 1]);
-    return w;
-  }
-
-  const size_t off =
-      (n >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF) ? 3 : 0;
-  const std::string_view raw(reinterpret_cast<const char*>(b.data()) + off,
-                             n - off);
-  std::wstring w = MultiByteToWide(raw, CP_UTF8, MB_ERR_INVALID_CHARS);
-  return w.empty() ? MultiByteToWide(raw, CP_ACP) : w;
-}
-
-std::wstring ReadTextFile(const std::wstring& path) {
-  const auto bytes = ReadBytes(path);
-  return bytes ? DecodeTextBytes(*bytes) : std::wstring{};
-}
-
-// Expands the tabs of |raw| and adds it to |lines|, wrapped at |width| pixels,
-// at a space when possible.
-static void WrapLine(HDC hdc, const std::wstring& raw, int width,
-                     std::vector<std::wstring>& lines) {
-  std::wstring line;
-  line.reserve(raw.size());
-  for (wchar_t ch : raw) {
-    if (ch == L'\t')
-      line.append(4 - line.size() % 4, L' ');
-    else
-      line += ch;
-  }
-  if (line.empty()) {
-    lines.push_back({});
-    return;
-  }
-
-  for (size_t start = 0; start < line.size();) {
-    INT fit = 0;
-    SIZE sz = {};
-    GetTextExtentExPointW(hdc, line.c_str() + start,
-                          static_cast<int>(line.size() - start), width, &fit,
-                          nullptr, &sz);
-    size_t advance = static_cast<size_t>(std::max(fit, 1));
-    if (start + advance < line.size()) {
-      const size_t sp = line.rfind(L' ', start + advance - 1);
-      if (sp != std::wstring::npos && sp > start) advance = sp - start + 1;
-    }
-    lines.push_back(line.substr(start, advance));
-    start += advance;
-  }
-}
-
-// Prints a text file in 10 pt Consolas with 1-inch margins, wrapping long
-// lines.
-static std::optional<FlutterError> RenderTextToDC(HDC hdc,
-                                                  const std::wstring& path,
-                                                  int copies,
-                                                  const PageRanges& ranges) {
-  const auto bytes = ReadBytes(path);
-  if (!bytes)
-    return FlutterError("FILE_ERROR",
-                        "Cannot read file: " + WideToUtf8(path.c_str()));
-  const std::wstring text = DecodeTextBytes(*bytes);
-
-  const int dpiX     = GetDeviceCaps(hdc, LOGPIXELSX);
-  const int dpiY     = GetDeviceCaps(hdc, LOGPIXELSY);
-  const int marginX  = dpiX;
-  const int marginY  = dpiY;
-  const int contentW = GetDeviceCaps(hdc, HORZRES) - 2 * marginX;
-  const int contentH = GetDeviceCaps(hdc, VERTRES) - 2 * marginY;
-
-  // DEFAULT_CHARSET turns on font linking: GDI picks a fallback font for each
-  // glyph Consolas lacks (CJK, Arabic…).
-  LOGFONTW lf = {};
-  lf.lfHeight         = -MulDiv(10, dpiY, 72);
-  lf.lfCharSet        = DEFAULT_CHARSET;
-  lf.lfPitchAndFamily = FIXED_PITCH | FF_MODERN;
-  wcscpy_s(lf.lfFaceName, LF_FACESIZE, L"Consolas");
-  HFONT hFont    = CreateFontIndirectW(&lf);
-  HFONT hOldFont = static_cast<HFONT>(SelectObject(hdc, hFont));
-
-  TEXTMETRICW tm = {};
-  GetTextMetricsW(hdc, &tm);
-  const int lineH        = tm.tmHeight + tm.tmExternalLeading;
-  const int linesPerPage = (contentH > 0 && lineH > 0) ? contentH / lineH : 1;
-
-  std::vector<std::wstring> lines;
-  for (size_t pos = 0; pos < text.size();) {
-    const size_t nl = text.find_first_of(L"\r\n", pos);
-    WrapLine(hdc, text.substr(pos, nl - pos), contentW, lines);
-    if (nl == std::wstring::npos) break;
-    pos = nl + (text.compare(nl, 2, L"\r\n") == 0 ? 2 : 1);
-  }
-
-  const int total = static_cast<int>(lines.size());
-  const int pages = (total == 0) ? 1 : (total + linesPerPage - 1) / linesPerPage;
-
-  auto err = PrintPages(hdc, path, pages, copies, ranges, [&](int p) {
-    const int first = p * linesPerPage;
-    const int end   = std::min(first + linesPerPage, total);
-    for (int li = first; li < end; ++li) {
-      const std::wstring& ln = lines[li];
-      if (!ln.empty())
-        TextOutW(hdc, marginX, marginY + (li - first) * lineH,
-                 ln.c_str(), static_cast<int>(ln.size()));
-    }
-    return true;
-  });
-
-  SelectObject(hdc, hOldFont);
-  DeleteObject(hFont);
-  return err;
-}
-
-std::optional<FlutterError> RenderToDC(HDC hdc, const std::wstring& wPath,
-                                       FileKind kind, int copies,
-                                       const PageRanges& ranges) {
-  switch (kind) {
-    case FileKind::kPdf:      return RenderPdfToDC(hdc, wPath, copies, ranges);
-    case FileKind::kImage:    return RenderImageToDC(hdc, wPath, copies, ranges);
-    case FileKind::kMetafile: return RenderMetafileToDC(hdc, wPath, copies, ranges);
-    case FileKind::kText:     return RenderTextToDC(hdc, wPath, copies, ranges);
-    case FileKind::kOther:    break;
-  }
-  return FlutterError("UNSUPPORTED_FILE", "File type not supported for printing");
 }
 
 std::optional<FlutterError> ShellPrint(const std::wstring& wPath,
@@ -643,78 +857,82 @@ std::optional<FlutterError> ShellPrint(const std::wstring& wPath,
 }
 
 // ---------------------------------------------------------------------------
-// Preview rendering
+// Preview
 // ---------------------------------------------------------------------------
 
-int GetPageCount(const std::wstring& path, FileKind kind) {
-  switch (kind) {
-    case FileKind::kPdf: {
-      std::lock_guard<std::mutex> lock(g_pdfium_mtx);
-      auto doc = OpenPdf(path);
-      return doc ? FPDF_GetPageCount(doc.get()) : 0;
-    }
-    case FileKind::kImage: {
-      ComScope com;
-      auto img = OpenImage(path);
-      return img ? static_cast<int>(img->pageCount) : 0;
-    }
-    case FileKind::kMetafile:
-      return 1;
-    default:
-      return 0;
+std::unique_ptr<Preview> Preview::Open(HDC ic, const std::wstring& path,
+                                       FileKind kind) {
+  std::optional<FlutterError> error;
+  auto doc = OpenDocument(ic, path, kind, error);
+  if (!doc) {
+    DeleteDC(ic);
+    return nullptr;
   }
+  return std::unique_ptr<Preview>(new Preview(ic, std::move(doc)));
 }
 
-static std::vector<uint8_t> RenderPdfPageToPng(const std::wstring& path,
-                                               int pageIndex, double dpi) {
-  std::lock_guard<std::mutex> lock(g_pdfium_mtx);
-  auto doc = OpenPdf(path);
-  if (!doc) return {};
-  PdfPtr<FPDF_PAGE> page(FPDF_LoadPage(doc.get(), pageIndex));
-  if (!page) return {};
+Preview::Preview(HDC ic, std::unique_ptr<Document> doc)
+    : ic_(ic), doc_(std::move(doc)) {}
 
-  const int w = static_cast<int>(FPDF_GetPageWidth(page.get())  * dpi / 72.0);
-  const int h = static_cast<int>(FPDF_GetPageHeight(page.get()) * dpi / 72.0);
-  if (w <= 0 || h <= 0) return {};
-
-  // PDFium BGRA has the same memory layout as GDI+ 32bppARGB.
-  PdfPtr<FPDF_BITMAP> bitmap(FPDFBitmap_Create(w, h, /*alpha=*/1));
-  if (!bitmap) return {};
-  FPDFBitmap_FillRect(bitmap.get(), 0, 0, w, h, 0xFFFFFFFF);
-  FPDF_RenderPageBitmap(bitmap.get(), page.get(), 0, 0, w, h, 0, FPDF_ANNOT);
-
-  Gdiplus::Bitmap gdiBmp(w, h, FPDFBitmap_GetStride(bitmap.get()),
-                         PixelFormat32bppARGB,
-                         static_cast<BYTE*>(FPDFBitmap_GetBuffer(bitmap.get())));
-  return EncodePng(gdiBmp);
+Preview::~Preview() {
+  doc_.reset();
+  DeleteDC(ic_);
 }
 
-std::vector<uint8_t> RenderPageToPng(const std::wstring& path, FileKind kind,
-                                     int pageIndex, double dpi) {
-  EnsureGdiplusInit();
-  const UINT maxSide = static_cast<UINT>(12 * dpi);
+int Preview::PageCount() const { return doc_->PageCount(); }
 
-  switch (kind) {
-    case FileKind::kPdf:
-      return RenderPdfPageToPng(path, pageIndex, dpi);
-    case FileKind::kImage: {
-      ComScope com;
-      auto img = OpenImage(path);
-      if (!img || pageIndex < 0) return {};
-      // The decoder shrinks large pages, and never enlarges small ones.
-      auto bmp = DecodePage(*img, static_cast<UINT>(pageIndex), maxSide);
-      return bmp ? ImageToPng(bmp.get(), 1.0) : std::vector<uint8_t>{};
-    }
-    case FileKind::kMetafile: {
-      Gdiplus::Metafile metafile(path.c_str());
-      if (metafile.GetLastStatus() != Gdiplus::Ok) return {};
-      return ImageToPng(&metafile, static_cast<double>(maxSide) /
-                                       std::max({metafile.GetWidth(),
-                                                 metafile.GetHeight(), 1u}));
-    }
-    default:
-      return {};
+std::vector<uint8_t> Preview::RenderPage(int index, int maxWidth,
+                                         int maxHeight) {
+  if (index < 0 || index >= doc_->PageCount() || maxWidth <= 0 ||
+      maxHeight <= 0)
+    return {};
+  PageTarget t = PrinterTarget(ic_);
+  if (t.dpiX <= 0 || t.dpiY <= 0 || t.physW <= 0 || t.physH <= 0) return {};
+
+  // Fit the sheet in the box, at the same scale on both axes.
+  const double dpi =
+      std::min(static_cast<double>(maxWidth) * t.dpiX / t.physW,
+               static_cast<double>(maxHeight) * t.dpiY / t.physH);
+  t.scaleX  = dpi / t.dpiX;
+  t.scaleY  = dpi / t.dpiY;
+  t.originX = static_cast<int>(std::lround(t.offX * t.scaleX));
+  t.originY = static_cast<int>(std::lround(t.offY * t.scaleY));
+  const int w = std::max(1, static_cast<int>(std::lround(t.physW * t.scaleX)));
+  const int h = std::max(1, static_cast<int>(std::lround(t.physH * t.scaleY)));
+
+  // A white sheet, top-down, 4 bytes per pixel.
+  BITMAPINFO bi = {};
+  bi.bmiHeader.biSize        = sizeof(bi.bmiHeader);
+  bi.bmiHeader.biWidth       = w;
+  bi.bmiHeader.biHeight      = -h;
+  bi.bmiHeader.biPlanes      = 1;
+  bi.bmiHeader.biBitCount    = 32;
+  bi.bmiHeader.biCompression = BI_RGB;
+  void* bits = nullptr;
+  HBITMAP dib = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+  if (!dib) return {};
+  HDC mem = CreateCompatibleDC(nullptr);
+  HGDIOBJ oldBmp = SelectObject(mem, dib);
+  PatBlt(mem, 0, 0, w, h, WHITENESS);
+
+  // Drop what falls outside the printable area, as the printer does.
+  const Gdiplus::Rect area = t.Map(0, 0, t.resW, t.resH);
+  IntersectClipRect(mem, area.X, area.Y, area.GetRight(), area.GetBottom());
+  t.hdc = mem;
+  const bool drawn = doc_->DrawPage(t, index);
+  GdiFlush();
+
+  std::vector<uint8_t> png;
+  if (drawn) {
+    // GDI leaves the alpha bytes at 0: read them as RGB.
+    Gdiplus::Bitmap sheet(w, h, w * 4, PixelFormat32bppRGB,
+                          static_cast<BYTE*>(bits));
+    png = EncodePng(sheet);
   }
+  SelectObject(mem, oldBmp);
+  DeleteDC(mem);
+  DeleteObject(dib);
+  return png;
 }
 
 }  // namespace flutter_print

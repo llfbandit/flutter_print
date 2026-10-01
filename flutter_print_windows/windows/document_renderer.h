@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -37,18 +38,32 @@ std::optional<FlutterError> RenderToDC(HDC hdc, const std::wstring& wPath,
 std::optional<FlutterError> ShellPrint(const std::wstring& wPath,
                                        const std::wstring& printerName);
 
-// Reads a text file in UTF-16, UTF-8 or the ANSI code page. Returns {} on
-// error.
-std::wstring ReadTextFile(const std::wstring& path);
+class Document;
 
-// Returns the page count of a PDF, image or metafile, or 0 on error.
-// Thread-safe.
-int GetPageCount(const std::wstring& path, FileKind kind);
+// A file laid out like print for a printer, kept open while the dialog shows
+// it. Use it from one thread.
+class Preview {
+ public:
+  // Opens |path| for the printer and paper of |ic| (see CreatePrinterIC), and
+  // takes |ic|. Returns null on error.
+  static std::unique_ptr<Preview> Open(HDC ic, const std::wstring& path,
+                                       FileKind kind);
+  ~Preview();
+  Preview(const Preview&) = delete;
+  Preview& operator=(const Preview&) = delete;
 
-// Renders a page (0-based) of a PDF, image or metafile to PNG bytes on white.
-// |dpi| sets the PDF scale. Images and metafiles fit in a 12-inch square at
-// |dpi|, but bitmaps are never enlarged. Returns {} on error. Thread-safe.
-std::vector<uint8_t> RenderPageToPng(const std::wstring& path, FileKind kind,
-                                     int pageIndex, double dpi);
+  int PageCount() const;
+
+  // Renders a page (0-based) as the printer prints it: the whole sheet,
+  // fitted in |maxWidth| x |maxHeight| pixels, as PNG bytes. Returns {} on
+  // error.
+  std::vector<uint8_t> RenderPage(int index, int maxWidth, int maxHeight);
+
+ private:
+  Preview(HDC ic, std::unique_ptr<Document> doc);
+
+  HDC ic_;
+  std::unique_ptr<Document> doc_;
+};
 
 }  // namespace flutter_print

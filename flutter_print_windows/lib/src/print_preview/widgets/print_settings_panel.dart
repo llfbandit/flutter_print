@@ -32,6 +32,9 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
   PrinterCapabilities? _caps;
   List<PageRange>? _presetRanges;
 
+  /// True while the user picks pages rather than all of them.
+  bool _customPages = false;
+
   /// Use the printer's default paper until the caller or the user sets one.
   late bool _followPrinterPaper;
 
@@ -87,6 +90,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
     final opts = widget.initialOptions;
     final ps = opts.pageSize;
     if (opts.pageRanges?.isNotEmpty ?? false) _presetRanges = opts.pageRanges;
+    _customPages = _presetRanges != null;
     _followPrinterPaper = ps == null;
 
     if (ps != null && !allPageSizes.contains(ps.name)) {
@@ -103,10 +107,11 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
     );
   }
 
-  // Always show a preset range, so the user can see and fix it.
+  // Always show custom pages, so the user can see and fix them, even when a
+  // new layout leaves a single page.
   bool get _showPages {
     final count = widget.pageCount;
-    return count != null && (count > 1 || _presetRanges != null);
+    return count != null && (count > 1 || _customPages);
   }
 
   // Counts printer changes, to drop the paper of an older printer.
@@ -174,6 +179,9 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
                 pageCount: widget.pageCount!,
                 initialRanges: _presetRanges,
                 onChanged: (ranges) {
+                  setState(
+                    () => _customPages = ranges == null || ranges.isNotEmpty,
+                  );
                   widget.onPagesValidChanged(ranges != null);
                   if (ranges != null) {
                     _emit(_options.copyWith(pageRanges: ranges));
@@ -393,6 +401,18 @@ class _PagesSelectorState extends State<_PagesSelector> {
       _custom = true;
       _controller.text = formatPageRanges(ranges);
       // Check the preset against the page count once the parent is built.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _emit();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(_PagesSelector oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A new layout can change the page count: check the ranges again, once
+    // the parent is built.
+    if (_custom && widget.pageCount != oldWidget.pageCount) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _emit();
       });

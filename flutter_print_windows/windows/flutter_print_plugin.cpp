@@ -166,6 +166,49 @@ void ReplyAsync(std::shared_ptr<std::atomic<bool>> alive, WinResult result,
            });
 }
 
+// Printer and paper the preview lays pages out for.
+struct PageLayout {
+  std::wstring printer;
+  PrintOptions options;
+};
+
+// Reads the "printerName", "paperSizeName", "paperWidth", "paperHeight" and
+// "landscape" arguments, as the print options hold them.
+PageLayout GetLayoutArgs(const flutter::EncodableMap& args) {
+  PageLayout layout;
+  if (const auto* printer = GetArg<std::string>(args, "printerName"))
+    layout.printer = Utf8ToWide(*printer);
+  if (const auto* name = GetArg<std::string>(args, "paperSizeName")) {
+    PageSize size(*name);
+    size.set_width(GetArg<double>(args, "paperWidth"));
+    size.set_height(GetArg<double>(args, "paperHeight"));
+    layout.options.set_page_size(size);
+  }
+  if (const auto* landscape = GetArg<bool>(args, "landscape"))
+    layout.options.set_landscape(*landscape);
+  return layout;
+}
+
+// Returns a printer IC for |layout|, on the default printer when it names
+// none, or null.
+HDC CreateLayoutIC(const PageLayout& layout) {
+  const std::wstring printer =
+      layout.printer.empty() ? DefaultPrinterName() : layout.printer;
+  return printer.empty() ? nullptr : CreatePrinterIC(printer, &layout.options);
+}
+
+// Returns args[key] when it holds an integer, else nullopt.
+std::optional<int64_t> GetIntArg(const flutter::EncodableMap& args,
+                                 const char* key) {
+  if (const auto* v = GetArg<int32_t>(args, key)) return *v;
+  if (const auto* v = GetArg<int64_t>(args, key)) return *v;
+  return std::nullopt;
+}
+
+// Keep a few previews at most: a dialog that never closes its preview, e.g.
+// after a hot restart, doesn't leak.
+constexpr size_t kMaxPreviews = 4;
+
 }  // namespace
 
 // static
@@ -192,6 +235,8 @@ FlutterPrintPlugin::FlutterPrintPlugin()
 
 FlutterPrintPlugin::~FlutterPrintPlugin() {
   *alive_ = false;
+  // Close the previews on their own thread.
+  preview_worker_.Stop([this] { previews_.clear(); });
 }
 
 // ---------------------------------------------------------------------------
@@ -295,13 +340,12 @@ void FlutterPrintPlugin::HandleWindowsMethod(
   if (!args) { result->Error("INVALID_ARGS", "Expected map"); return; }
 
   const std::string& method = call.method_name();
-  if (method == "getFileKind")        return HandleGetFileKind(*args, std::move(result));
-  if (method == "getPageCount")       return HandleGetPageCount(*args, std::move(result));
-  if (method == "renderPageToPng")    return HandleRenderPageToPng(*args, std::move(result));
-  if (method == "decodeTextFile")     return HandleDecodeTextFile(*args, std::move(result));
-  if (method == "getMinimumMargins")  return HandleGetMinimumMargins(*args, std::move(result));
+  if (method == "getFileKind")         return HandleGetFileKind(*args, std::move(result));
+  if (method == "openPreview")         return HandleOpenPreview(*args, std::move(result));
+  if (method == "renderPreviewPage")   return HandleRenderPreviewPage(*args, std::move(result));
+  if (method == "closePreview")        return HandleClosePreview(*args, std::move(result));
   if (method == "getDefaultPaperSize") return HandleGetDefaultPaperSize(*args, std::move(result));
-  if (method == "openInDefaultApp")   return HandleOpenInDefaultApp(*args, std::move(result));
+  if (method == "openInDefaultApp")    return HandleOpenInDefaultApp(*args, std::move(result));
   result->NotImplemented();
 }
 
@@ -318,66 +362,70 @@ void FlutterPrintPlugin::HandleGetFileKind(const flutter::EncodableMap& args,
   });
 }
 
-void FlutterPrintPlugin::HandleGetPageCount(const flutter::EncodableMap& args,
-                                            WinResult result) {
-  auto wPath = GetFilePathArg(args, result);
-  if (!wPath) return;
-  ReplyAsync(alive_, std::move(result),
-             [wPath = std::move(*wPath), kind = GetKindArg(args)] {
-               return flutter::EncodableValue(
-                   GetPageCount(wPath, kind ? *kind : DetectFileKind(wPath)));
-             });
-}
-
-void FlutterPrintPlugin::HandleRenderPageToPng(
-    const flutter::EncodableMap& args, WinResult result) {
-  auto wPath = GetFilePathArg(args, result);
-  if (!wPath) return;
-  const auto* pageIndex = GetArg<int32_t>(args, "pageIndex");
-  const auto* dpi = GetArg<double>(args, "dpi");
-  ReplyAsync(alive_, std::move(result),
-             [wPath = std::move(*wPath), kind = GetKindArg(args),
-              pageIndex = pageIndex ? *pageIndex : 0,
-              dpi = dpi ? *dpi : 150.0] {
-               auto png = RenderPageToPng(
-                   wPath, kind ? *kind : DetectFileKind(wPath), pageIndex, dpi);
-               return png.empty() ? flutter::EncodableValue()
-                                  : flutter::EncodableValue(std::move(png));
-             });
-}
-
-void FlutterPrintPlugin::HandleDecodeTextFile(const flutter::EncodableMap& args,
-                                              WinResult result) {
-  auto wPath = GetFilePathArg(args, result);
-  if (!wPath) return;
-  ReplyAsync(alive_, std::move(result), [wPath = std::move(*wPath)] {
-    return flutter::EncodableValue(WideToUtf8(ReadTextFile(wPath).c_str()));
+// The preview handlers run on the preview worker, which owns |previews_|.
+void FlutterPrintPlugin::PostPreviewTask(
+    WinResult result, std::function<flutter::EncodableValue()> work) {
+  // Share the result: std::function needs a copyable task.
+  auto reply = std::shared_ptr(std::move(result));
+  preview_worker_.Post([alive = alive_, reply, work = std::move(work)] {
+    const flutter::EncodableValue value = work();
+    if (alive->load()) reply->Success(value);
   });
 }
 
-void FlutterPrintPlugin::HandleGetMinimumMargins(
+void FlutterPrintPlugin::HandleOpenPreview(const flutter::EncodableMap& args,
+                                           WinResult result) {
+  auto wPath = GetFilePathArg(args, result);
+  if (!wPath) return;
+  PostPreviewTask(std::move(result), [this, wPath = std::move(*wPath),
+                                      kind = GetKindArg(args),
+                                      layout = GetLayoutArgs(args)] {
+    HDC ic = CreateLayoutIC(layout);
+    auto preview =
+        ic ? Preview::Open(ic, wPath, kind ? *kind : DetectFileKind(wPath))
+           : nullptr;
+    if (!preview) return flutter::EncodableValue();
+    while (previews_.size() >= kMaxPreviews) previews_.erase(previews_.begin());
+    const int64_t id = ++last_preview_id_;
+    const int pageCount = preview->PageCount();
+    previews_[id] = std::move(preview);
+    return flutter::EncodableValue(flutter::EncodableMap{
+        {flutter::EncodableValue("id"), flutter::EncodableValue(id)},
+        {flutter::EncodableValue("pageCount"), flutter::EncodableValue(pageCount)},
+    });
+  });
+}
+
+void FlutterPrintPlugin::HandleRenderPreviewPage(
     const flutter::EncodableMap& args, WinResult result) {
-  const auto* printer = GetArg<std::string>(args, "printerName");
-  if (!printer) {
-    result->Error("INVALID_ARGS", "Missing printerName");
+  const auto id = GetIntArg(args, "id");
+  const auto page = GetIntArg(args, "pageIndex");
+  const auto width = GetIntArg(args, "maxWidth");
+  const auto height = GetIntArg(args, "maxHeight");
+  if (!id || !page || !width || !height) {
+    result->Error("INVALID_ARGS", "Missing id, pageIndex, maxWidth or maxHeight");
     return;
   }
-  const auto* paperName = GetArg<std::string>(args, "paperSizeName");
-  const auto* width = GetArg<double>(args, "paperWidth");
-  const auto* height = GetArg<double>(args, "paperHeight");
-  ReplyAsync(alive_, std::move(result),
-             [wPrinter = Utf8ToWide(*printer),
-              paperName = paperName ? *paperName : std::string{},
-              width = width ? *width : 0.0, height = height ? *height : 0.0] {
-               auto m = GetMinimumMargins(wPrinter, paperName, width, height);
-               if (!m) return flutter::EncodableValue();
-               return flutter::EncodableValue(flutter::EncodableMap{
-                   {flutter::EncodableValue("left"),   flutter::EncodableValue(m->left)},
-                   {flutter::EncodableValue("top"),    flutter::EncodableValue(m->top)},
-                   {flutter::EncodableValue("right"),  flutter::EncodableValue(m->right)},
-                   {flutter::EncodableValue("bottom"), flutter::EncodableValue(m->bottom)},
-               });
-             });
+  PostPreviewTask(std::move(result), [this, id = *id,
+                                      page = static_cast<int>(*page),
+                                      width = static_cast<int>(*width),
+                                      height = static_cast<int>(*height)] {
+    auto it = previews_.find(id);
+    auto png = it == previews_.end()
+                   ? std::vector<uint8_t>{}
+                   : it->second->RenderPage(page, width, height);
+    return png.empty() ? flutter::EncodableValue()
+                       : flutter::EncodableValue(std::move(png));
+  });
+}
+
+void FlutterPrintPlugin::HandleClosePreview(const flutter::EncodableMap& args,
+                                            WinResult result) {
+  const auto id = GetIntArg(args, "id");
+  PostPreviewTask(std::move(result), [this, id] {
+    if (id) previews_.erase(*id);
+    return flutter::EncodableValue();
+  });
 }
 
 void FlutterPrintPlugin::HandleGetDefaultPaperSize(

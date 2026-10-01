@@ -57,3 +57,10 @@ PageSize pageSizeFromName(String name) {
   final (width, height) = _pageSizesMm[name] ?? _pageSizesMm['A4']!;
   return PageSize(name: known ? name : 'A4', width: width, height: height);
 }
+
+/// Whether [a] and [b] lay pages out the same: same printer, paper and
+/// orientation.
+bool sameLayout(PrintOptions a, PrintOptions b) =>
+    a.printerAddress == b.printerAddress &&
+    a.pageSize == b.pageSize &&
+    a.landscape == b.landscape;

@@ -3,8 +3,13 @@
 #include <windows.h>
 #include <objbase.h>
 
+#include <condition_variable>
+#include <deque>
+#include <functional>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 
 namespace flutter_print {
 
@@ -35,6 +40,30 @@ class ComScope {
 
  private:
   bool ok_;
+};
+
+// Runs tasks in order on its own thread, with COM on.
+class SerialWorker {
+ public:
+  SerialWorker();
+  ~SerialWorker();  // Drops the queued tasks.
+  SerialWorker(const SerialWorker&) = delete;
+  SerialWorker& operator=(const SerialWorker&) = delete;
+
+  void Post(std::function<void()> task);
+
+  // Drops the queued tasks, runs |last| on the thread, and waits for it to
+  // end. Later tasks are dropped.
+  void Stop(std::function<void()> last = nullptr);
+
+ private:
+  void Run();
+
+  std::mutex mtx_;
+  std::condition_variable cv_;
+  std::deque<std::function<void()>> tasks_;
+  bool stopping_ = false;
+  std::thread thread_;  // Last: it starts once the rest is ready.
 };
 
 }  // namespace flutter_print

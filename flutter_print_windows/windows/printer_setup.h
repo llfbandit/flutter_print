@@ -3,7 +3,6 @@
 #include <windows.h>
 #include <winspool.h>
 
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,21 +41,8 @@ std::string DefaultPaperName(const std::wstring& printerName);
 HDC CreatePrinterDC(const std::wstring& printerName, const PrintOptions* options,
                     int* out_software_copies = nullptr);
 
-// Margins in mm.
-struct PrinterMargins {
-  double left;
-  double top;
-  double right;
-  double bottom;
-};
-
-// Returns the unprintable margins of |printerName| for a paper size.
-// |paperSizeName| is a known name like "A4"; when it is empty or unknown, the
-// width and height give a custom size. The width and height are oriented:
-// width > height means landscape. Returns nullopt on error.
-std::optional<PrinterMargins> GetMinimumMargins(const std::wstring& printerName,
-                                                const std::string& paperSizeName,
-                                                double paperWidthMm,
-                                                double paperHeightMm);
+// Like CreatePrinterDC, but an information context: it can't print, but lays
+// pages out the same, at a lower cost. The caller must DeleteDC it.
+HDC CreatePrinterIC(const std::wstring& printerName, const PrintOptions* options);
 
 }  // namespace flutter_print
