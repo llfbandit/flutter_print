@@ -1,5 +1,3 @@
-import 'dart:math' show min;
-
 import 'package:flutter/widgets.dart';
 import 'package:flutter_print_platform_interface/flutter_print_platform_interface.dart';
 
@@ -60,7 +58,6 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
     final caps = _caps;
     if (caps == null) return;
 
-    final copies = _options.copies ?? 1;
     final color = switch (caps.colorCapability) {
       ColorCapability.enforced => true,
       ColorCapability.monochrome => false,
@@ -76,8 +73,8 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
         ? currentName
         : sizes.first;
 
+    // No limit on copies: the plugin draws those the driver can't make.
     _options = _options.copyWith(
-      copies: min(copies, caps.maxCopies ?? copies),
       color: color,
       duplexMode: duplex,
       pageSize: _resolvePageSize(validatedName),
@@ -166,15 +163,13 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
             initialAddress: _options.printerAddress,
             onChanged: _onPrinterChanged,
           ),
-          if (_caps?.maxCopies != 1)
-            ..._section(
-              l10n.copies,
-              _CopiesSelector(
-                value: _options.copies ?? 1,
-                max: _caps?.maxCopies,
-                onChanged: (v) => _emit(_options.copyWith(copies: v)),
-              ),
+          ..._section(
+            l10n.copies,
+            _CopiesSelector(
+              value: _options.copies ?? 1,
+              onChanged: (v) => _emit(_options.copyWith(copies: v)),
             ),
+          ),
           if (_showPages)
             ..._section(
               l10n.pages,
@@ -339,14 +334,9 @@ class _PrinterSelectorState extends State<_PrinterSelector> {
 }
 
 class _CopiesSelector extends StatelessWidget {
-  const _CopiesSelector({
-    required this.value,
-    required this.onChanged,
-    this.max,
-  });
+  const _CopiesSelector({required this.value, required this.onChanged});
 
   final int value;
-  final int? max;
   final ValueChanged<int> onChanged;
 
   @override
@@ -354,7 +344,7 @@ class _CopiesSelector extends StatelessWidget {
     return WinNumberBox(
       value: value,
       min: 1,
-      max: max ?? 99,
+      max: 999,
       onChanged: onChanged,
     );
   }
