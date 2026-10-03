@@ -67,14 +67,16 @@ ColorCapability QueryColor(const PRINTER_INFO_2W& info) {
                                       DC_COLORDEVICE, nullptr, nullptr);
   if (r == 1) return ColorCapability::kSupported;
   if (r != 0) return ColorCapability::kUnknown;
-  // A few virtual printers report monochrome but set DM_COLOR. Printer
+  // A few virtual printers report monochrome but default to color. Many mono
+  // drivers set DM_COLOR too, with a mono value: check the value. Printer
   // connections can come without a DEVMODE: ask the driver then.
   std::vector<BYTE> driverDm;
   const DEVMODEW* dm = info.pDevMode;
   if (!dm && !(driverDm = GetDefaultDevMode(info.pPrinterName)).empty())
     dm = reinterpret_cast<const DEVMODEW*>(driverDm.data());
-  return dm && (dm->dmFields & DM_COLOR) ? ColorCapability::kEnforced
-                                         : ColorCapability::kMonochrome;
+  return dm && (dm->dmFields & DM_COLOR) && dm->dmColor == DMCOLOR_COLOR
+             ? ColorCapability::kEnforced
+             : ColorCapability::kMonochrome;
 }
 
 PrinterCapabilities QueryCapabilities(const PRINTER_INFO_2W& info) {
