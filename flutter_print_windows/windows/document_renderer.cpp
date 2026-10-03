@@ -877,10 +877,14 @@ std::optional<FlutterError> RenderToDC(HDC hdc, const std::wstring& wPath,
         return FlutterError("PRINT_ERROR",
                             "Cannot draw page " + std::to_string(i + 1));
       }
-      EndPage(hdc);
+      // Fails when the job is cancelled or the spooler fails.
+      if (EndPage(hdc) <= 0) {
+        AbortDoc(hdc);
+        return FlutterError("PRINT_ERROR", "EndPage failed");
+      }
     }
   }
-  EndDoc(hdc);
+  if (EndDoc(hdc) <= 0) return FlutterError("PRINT_ERROR", "EndDoc failed");
   return std::nullopt;
 }
 
