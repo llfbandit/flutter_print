@@ -35,18 +35,26 @@ class WindowsPrintChannel {
   }
 
   /// Renders a page (0-based) of a preview as the printer prints it: the
-  /// whole sheet, fitted in [maxWidth] x [maxHeight] pixels, as PNG. Returns
-  /// null on error.
+  /// sheet fitted in [maxWidth] x [maxHeight] pixels, as PNG. [region], in
+  /// the pixels of that sheet, renders only that part of it. Returns null on
+  /// error.
   static Future<Uint8List?> renderPreviewPage(
     int id,
     int pageIndex,
     int maxWidth,
-    int maxHeight,
-  ) => _channel.invokeMethod<Uint8List>('renderPreviewPage', {
+    int maxHeight, {
+    ({int left, int top, int right, int bottom})? region,
+  }) => _channel.invokeMethod<Uint8List>('renderPreviewPage', {
     'id': id,
     'pageIndex': pageIndex,
     'maxWidth': maxWidth,
     'maxHeight': maxHeight,
+    if (region != null) ...{
+      'regionLeft': region.left,
+      'regionTop': region.top,
+      'regionRight': region.right,
+      'regionBottom': region.bottom,
+    },
   });
 
   static Future<void> closePreview(int id) =>
@@ -62,6 +70,11 @@ class WindowsPrintChannel {
       _channel.invokeMethod<String>('getDefaultPaperSize', {
         'printerName': printerName,
       });
+
+  /// Returns the 7 shades of the Windows accent color, lightest first, as
+  /// ARGB values, or null when unknown.
+  static Future<List<int>?> getAccentColors() =>
+      _channel.invokeListMethod<int>('getAccentColors');
 
   // The options that change how pages are laid out.
   static Map<String, Object> _layoutArgs(PrintOptions options) => {

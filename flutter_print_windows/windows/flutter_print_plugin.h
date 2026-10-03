@@ -57,6 +57,7 @@ class FlutterPrintPlugin : public flutter::Plugin, public FlutterPrintApi {
   void HandleClosePreview(const flutter::EncodableMap& args, WinResult result);
   void HandleGetDefaultPaperSize(const flutter::EncodableMap& args, WinResult result);
   void HandleOpenInDefaultApp(const flutter::EncodableMap& args, WinResult result);
+  void HandleGetAccentColors(WinResult result);
 
   // Runs |work| on the preview worker, then replies with its value if the
   // plugin still exists.

@@ -349,17 +349,37 @@ class CharWidths {
   size_t Fit(std::wstring_view s, int width) {
     int used = 0;
     for (size_t i = 0; i < s.size();) {
-      const bool pair = IS_HIGH_SURROGATE(s[i]) && i + 1 < s.size() &&
-                        IS_LOW_SURROGATE(s[i + 1]);
-      const int w = pair ? PairWidth(s[i], s[i + 1]) : Width(s[i]);
+      size_t units = 1;
+      const int w = At(s, i, units);
       if (used + w > width) return i;
       used += w;
-      i += pair ? 2 : 1;
+      i += units;
     }
     return s.size();
   }
 
+  // The advance of each UTF-16 unit of |s|. A surrogate pair's width goes on
+  // its first unit.
+  std::vector<INT> Advances(std::wstring_view s) {
+    std::vector<INT> dx(s.size(), 0);
+    for (size_t i = 0; i < s.size();) {
+      size_t units = 1;
+      dx[i] = At(s, i, units);
+      i += units;
+    }
+    return dx;
+  }
+
  private:
+  // The width of the character at |i| in |s|. Sets |units| to its length: 2
+  // for a surrogate pair.
+  int At(std::wstring_view s, size_t i, size_t& units) {
+    const bool pair = IS_HIGH_SURROGATE(s[i]) && i + 1 < s.size() &&
+                      IS_LOW_SURROGATE(s[i + 1]);
+    units = pair ? 2 : 1;
+    return pair ? PairWidth(s[i], s[i + 1]) : Width(s[i]);
+  }
+
   int Width(wchar_t c) {
     int& w = widths_[c];
     if (w < 0) w = Measure(&c, 1);
@@ -492,6 +512,10 @@ struct PageTarget {
   // the target. Print uses 1 and 0: it draws on the printer DC itself.
   double scaleX = 1, scaleY = 1;
   int originX = 0, originY = 0;
+  // The pixels of the target when it is a bitmap, as for the preview:
+  // 32 bits, top-down. PDFium draws on them directly.
+  void* bits = nullptr;
+  int bitsW = 0, bitsH = 0;
 
   // Maps a rect in printer pixels, from the printable area corner, to the
   // target.
@@ -526,6 +550,9 @@ static void DrawFitted(const PageTarget& t, Gdiplus::Image* img) {
   const double dw = iw * s, dh = ih * s;
   Gdiplus::Graphics g(t.hdc);
   g.SetPageUnit(Gdiplus::UnitPixel);
+  // The preview shrinks decodes up to twice its size: shrink them smoothly.
+  if (t.scaleX < 1 || t.scaleY < 1)
+    g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
   g.DrawImage(img, t.Map((t.resW - dw) / 2, (t.resH - dh) / 2, dw, dh));
 }
 
@@ -568,8 +595,29 @@ class PdfDocument : public Document {
     const double h = FPDF_GetPageHeight(page.get()) * t.dpiY / 72.0;
     const double s = std::min({1.0, t.physW / w, t.physH / h});
     const Gdiplus::Rect r = t.Map(-t.offX, -t.offY, w * s, h * s);
-    FPDF_RenderPage(t.hdc, page.get(), r.X, r.Y, r.Width, r.Height, 0,
-                    FPDF_ANNOT | FPDF_PRINTING);
+    if (!t.bits) {
+      FPDF_RenderPage(t.hdc, page.get(), r.X, r.Y, r.Width, r.Height, 0,
+                      FPDF_ANNOT | FPDF_PRINTING);
+      return true;
+    }
+    // On a bitmap, PDFium renders only the part inside it: a zoomed-in
+    // preview region doesn't cost the whole sheet. Clip to the printable
+    // area, as the printer does.
+    PdfPtr<FPDF_BITMAP> bitmap(FPDFBitmap_CreateEx(
+        t.bitsW, t.bitsH, FPDFBitmap_BGRx, t.bits, t.bitsW * 4));
+    if (!bitmap) return false;
+    const FS_MATRIX m = {
+        static_cast<float>(r.Width / FPDF_GetPageWidth(page.get())), 0, 0,
+        static_cast<float>(r.Height / FPDF_GetPageHeight(page.get())),
+        static_cast<float>(r.X), static_cast<float>(r.Y)};
+    const Gdiplus::Rect area = t.Map(0, 0, t.resW, t.resH);
+    const FS_RECTF clip = {
+        static_cast<float>(std::max(0, area.X)),
+        static_cast<float>(std::max(0, area.Y)),
+        static_cast<float>(std::min(t.bitsW, area.GetRight())),
+        static_cast<float>(std::min(t.bitsH, area.GetBottom()))};
+    FPDF_RenderPageBitmapWithMatrix(bitmap.get(), page.get(), &m, &clip,
+                                    FPDF_ANNOT | FPDF_PRINTING);
     return true;
   }
 
@@ -592,13 +640,15 @@ class ImageDocument : public Document {
   int PageCount() const override { return static_cast<int>(img_.pageCount); }
 
   bool DrawPage(const PageTarget& t, int index) override {
-    // Decode at the target size when it is smaller, as for the preview. Keep
-    // the last decoded page, for copies of a single page.
+    // Decode at the target size when it is smaller, as for the preview. Round
+    // it up to a power of 2, so zoom steps share a decode. Keep the last
+    // decoded page, for copies of a single page.
     const bool shrink = t.scaleX < 1 || t.scaleY < 1;
-    const UINT maxSide =
-        shrink ? static_cast<UINT>(std::max(t.resW * t.scaleX,
-                                            t.resH * t.scaleY))
-               : 0;
+    UINT maxSide = 0;
+    if (shrink) {
+      const double side = std::max(t.resW * t.scaleX, t.resH * t.scaleY);
+      for (maxSide = 256; maxSide < side; maxSide <<= 1) {}
+    }
     if (index != cached_ || maxSide != cachedSide_) {
       bmp_ = DecodePage(img_, static_cast<UINT>(index), maxSide);
       cached_ = index;
@@ -682,6 +732,7 @@ class TextDocument : public Document {
       if (nl == std::wstring_view::npos) break;
       pos = nl + (all.substr(nl, 2) == L"\r\n" ? 2 : 1);
     }
+    dx_ = widths.Advances(all);
     SelectObject(ref, old);
   }
 
@@ -706,6 +757,8 @@ class TextDocument : public Document {
       SetGraphicsMode(t.hdc, GM_ADVANCED);
       SetWorldTransform(t.hdc, &xf);
     }
+    // Place each glyph at its printer advance: a font realized at a scaled
+    // size rounds its own advances, which moves the text at each zoom.
     HGDIOBJ old = SelectObject(t.hdc, font_);
     const int total = static_cast<int>(lines_.size());
     const int first = index * linesPerPage_;
@@ -713,8 +766,9 @@ class TextDocument : public Document {
     for (int li = first; li < end; ++li) {
       const TextSpan& ln = lines_[li];
       if (ln.length > 0)
-        TextOutW(t.hdc, marginX_, marginY_ + (li - first) * lineH_,
-                 text_.data() + ln.start, static_cast<int>(ln.length));
+        ExtTextOutW(t.hdc, marginX_, marginY_ + (li - first) * lineH_, 0,
+                    nullptr, text_.data() + ln.start,
+                    static_cast<UINT>(ln.length), dx_.data() + ln.start);
     }
     SelectObject(t.hdc, old);
     if (mapped) ModifyWorldTransform(t.hdc, nullptr, MWT_IDENTITY);
@@ -722,8 +776,10 @@ class TextDocument : public Document {
   }
 
  private:
-  // The text with tabs expanded, and its wrapped lines.
+  // The text with tabs expanded, the printer advance of each unit, and its
+  // wrapped lines.
   std::wstring text_;
+  std::vector<INT> dx_;
   std::vector<TextSpan> lines_;
   HFONT font_ = nullptr;
   int marginX_ = 0, marginY_ = 0;
@@ -882,7 +938,7 @@ Preview::~Preview() {
 int Preview::PageCount() const { return doc_->PageCount(); }
 
 std::vector<uint8_t> Preview::RenderPage(int index, int maxWidth,
-                                         int maxHeight) {
+                                         int maxHeight, const RECT* region) {
   if (index < 0 || index >= doc_->PageCount() || maxWidth <= 0 ||
       maxHeight <= 0)
     return {};
@@ -897,8 +953,19 @@ std::vector<uint8_t> Preview::RenderPage(int index, int maxWidth,
   t.scaleY  = dpi / t.dpiY;
   t.originX = static_cast<int>(std::lround(t.offX * t.scaleX));
   t.originY = static_cast<int>(std::lround(t.offY * t.scaleY));
-  const int w = std::max(1, static_cast<int>(std::lround(t.physW * t.scaleX)));
-  const int h = std::max(1, static_cast<int>(std::lround(t.physH * t.scaleY)));
+  const int sheetW = std::max(1, static_cast<int>(std::lround(t.physW * t.scaleX)));
+  const int sheetH = std::max(1, static_cast<int>(std::lround(t.physH * t.scaleY)));
+
+  // The part to render: the region, within the sheet, or all of it.
+  RECT part = {0, 0, sheetW, sheetH};
+  if (region && !IntersectRect(&part, region, &part)) return {};
+  const int w = part.right - part.left;
+  const int h = part.bottom - part.top;
+  // Bound the memory: the caller asks for regions when zoomed in.
+  constexpr int kMaxSide = 8192;
+  if (w <= 0 || h <= 0 || w > kMaxSide || h > kMaxSide) return {};
+  t.originX -= part.left;
+  t.originY -= part.top;
 
   // A white sheet, top-down, 4 bytes per pixel.
   BITMAPINFO bi = {};
@@ -914,11 +981,16 @@ std::vector<uint8_t> Preview::RenderPage(int index, int maxWidth,
   HDC mem = CreateCompatibleDC(nullptr);
   HGDIOBJ oldBmp = SelectObject(mem, dib);
   PatBlt(mem, 0, 0, w, h, WHITENESS);
+  // GDI can batch the fill: flush it before PDFium writes the bits.
+  GdiFlush();
 
   // Drop what falls outside the printable area, as the printer does.
   const Gdiplus::Rect area = t.Map(0, 0, t.resW, t.resH);
   IntersectClipRect(mem, area.X, area.Y, area.GetRight(), area.GetBottom());
   t.hdc = mem;
+  t.bits = bits;
+  t.bitsW = w;
+  t.bitsH = h;
   const bool drawn = doc_->DrawPage(t, index);
   GdiFlush();
 

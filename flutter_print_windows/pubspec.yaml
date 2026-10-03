@@ -17,7 +17,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  fluent_ui: ^4.9.0
   flutter_print_platform_interface: ^0.3.0
 
 dev_dependencies:

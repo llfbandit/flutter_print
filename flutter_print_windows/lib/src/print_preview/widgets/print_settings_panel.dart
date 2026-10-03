@@ -1,11 +1,12 @@
 import 'dart:math' show min;
 
-import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_print_platform_interface/flutter_print_platform_interface.dart';
 
 import '../../windows_print_channel.dart';
 import '../l10n/print_localizations.dart';
 import '../print_dialog_utils.dart';
+import '../../windows_ui/windows_ui.dart';
 
 class PrintSettingsPanel extends StatefulWidget {
   const PrintSettingsPanel({
@@ -155,6 +156,8 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
     final l10n = PrintLocalizations.of(context);
 
     return SingleChildScrollView(
+      // Room for the focus rings, and the scrollbar on the right.
+      padding: const EdgeInsets.fromLTRB(3, 3, 10, 3),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -191,7 +194,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
             ),
           ..._section(
             l10n.layout,
-            _Choice(
+            WinComboBox(
               value: _options.landscape ?? false,
               items: {false: l10n.portrait, true: l10n.landscape},
               onChanged: (v) => _emit(_options.copyWith(landscape: v)),
@@ -201,7 +204,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
               _caps?.colorCapability != ColorCapability.enforced)
             ..._section(
               l10n.color,
-              _Choice(
+              WinComboBox(
                 value: _options.color ?? true,
                 items: {true: l10n.colorMode, false: l10n.grayscale},
                 onChanged: (v) => _emit(_options.copyWith(color: v)),
@@ -209,7 +212,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
             ),
           ..._section(
             l10n.paperSize,
-            _Choice(
+            WinComboBox(
               value: _options.pageSize?.name,
               items: {for (final n in _supportedPageSizeNames) n: n},
               onChanged: (v) {
@@ -221,7 +224,7 @@ class _PrintSettingsPanelState extends State<PrintSettingsPanel> {
           if (_caps?.supportsDuplex != false)
             ..._section(
               l10n.twoSided,
-              _Choice(
+              WinComboBox(
                 value: _options.duplexMode ?? DuplexMode.none,
                 items: {
                   DuplexMode.none: l10n.off,
@@ -252,7 +255,7 @@ class _SectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: Text(text, style: FluentTheme.of(context).typography.bodyStrong),
+      child: Text(text, style: WinTheme.of(context).typography.bodyStrong),
     );
   }
 }
@@ -316,30 +319,21 @@ class _PrinterSelectorState extends State<_PrinterSelector> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const ProgressRing(strokeWidth: 2);
+    if (_loading) return const WinProgressRing(size: 20, strokeWidth: 2);
 
     final l10n = PrintLocalizations.of(context);
     if (_printers.isEmpty) return Text(l10n.noPrintersFound);
 
-    return ComboBox<String>(
-      isExpanded: true,
+    return WinComboBox<String>(
       value: _selectedAddress,
       onChanged: (v) {
-        if (v == null) return;
         setState(() => _selectedAddress = v);
         widget.onChanged(_selectedInfo);
       },
-      items: _printers
-          .map(
-            (p) => ComboBoxItem<String>(
-              value: _keyOf(p),
-              child: Text(
-                l10n.printerDisplayName(p.label, isDefault: p.isDefault),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          )
-          .toList(),
+      items: {
+        for (final p in _printers)
+          _keyOf(p): l10n.printerDisplayName(p.label, isDefault: p.isDefault),
+      },
     );
   }
 }
@@ -357,14 +351,11 @@ class _CopiesSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return NumberBox<int>(
+    return WinNumberBox(
       value: value,
       min: 1,
       max: max ?? 99,
-      onChanged: (v) {
-        if (v != null) onChanged(v);
-      },
-      mode: SpinButtonPlacementMode.inline,
+      onChanged: onChanged,
     );
   }
 }
@@ -445,13 +436,10 @@ class _PagesSelectorState extends State<_PagesSelector> {
   @override
   Widget build(BuildContext context) {
     final l10n = PrintLocalizations.of(context);
-    final errorColor = FluentTheme.of(
-      context,
-    ).resources.systemFillColorCritical;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _Choice(
+        WinComboBox(
           value: _custom,
           items: {false: l10n.allPages, true: l10n.pageRangeCustom},
           onChanged: (v) {
@@ -461,43 +449,13 @@ class _PagesSelectorState extends State<_PagesSelector> {
         ),
         if (_custom) ...[
           const SizedBox(height: 8),
-          TextBox(
+          WinTextBox(
             controller: _controller,
             placeholder: '2-6, 9, 15',
-            keyboardType: TextInputType.text,
-            highlightColor: _invalid ? errorColor : null,
-            unfocusedColor: _invalid ? errorColor : null,
+            error: _invalid,
             onChanged: (_) => _emit(),
           ),
         ],
-      ],
-    );
-  }
-}
-
-/// A full-width ComboBox over [items], shown in map order.
-class _Choice<T> extends StatelessWidget {
-  const _Choice({
-    required this.value,
-    required this.items,
-    required this.onChanged,
-  });
-
-  final T? value;
-  final Map<T, String> items;
-  final ValueChanged<T> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return ComboBox<T>(
-      isExpanded: true,
-      value: value,
-      onChanged: (v) {
-        if (v != null) onChanged(v);
-      },
-      items: [
-        for (final MapEntry(:key, :value) in items.entries)
-          ComboBoxItem<T>(value: key, child: Text(value)),
       ],
     );
   }

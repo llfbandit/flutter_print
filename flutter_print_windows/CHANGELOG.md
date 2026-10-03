@@ -11,6 +11,7 @@
 * fix: Default the print dialog to the printer's paper size instead of A4.
 * fix: Select the caller's printer in the print dialog, not always the default.
 * feat: Preview each sheet as the printer prints it, with its margins.
+* chore: Drop the fluent_ui dependency.
 
 ## 0.2.0
 * feat: Make print options nullable to get system defaults.

@@ -54,10 +54,12 @@ class Preview {
 
   int PageCount() const;
 
-  // Renders a page (0-based) as the printer prints it: the whole sheet,
-  // fitted in |maxWidth| x |maxHeight| pixels, as PNG bytes. Returns {} on
-  // error.
-  std::vector<uint8_t> RenderPage(int index, int maxWidth, int maxHeight);
+  // Renders a page (0-based) as the printer prints it: the sheet fitted in
+  // |maxWidth| x |maxHeight| pixels, as PNG bytes. |region|, in the pixels of
+  // that sheet, renders only that part of it: to zoom in without rendering
+  // the whole sheet. Returns {} on error.
+  std::vector<uint8_t> RenderPage(int index, int maxWidth, int maxHeight,
+                                  const RECT* region = nullptr);
 
  private:
   Preview(HDC ic, std::unique_ptr<Document> doc);

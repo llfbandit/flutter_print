@@ -336,10 +336,12 @@ void FlutterPrintPlugin::ListPrinters(
 
 void FlutterPrintPlugin::HandleWindowsMethod(
     const flutter::MethodCall<flutter::EncodableValue>& call, WinResult result) {
+  const std::string& method = call.method_name();
+  if (method == "getAccentColors") return HandleGetAccentColors(std::move(result));
+
   const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
   if (!args) { result->Error("INVALID_ARGS", "Expected map"); return; }
 
-  const std::string& method = call.method_name();
   if (method == "getFileKind")         return HandleGetFileKind(*args, std::move(result));
   if (method == "openPreview")         return HandleOpenPreview(*args, std::move(result));
   if (method == "renderPreviewPage")   return HandleRenderPreviewPage(*args, std::move(result));
@@ -406,14 +408,25 @@ void FlutterPrintPlugin::HandleRenderPreviewPage(
     result->Error("INVALID_ARGS", "Missing id, pageIndex, maxWidth or maxHeight");
     return;
   }
-  PostPreviewTask(std::move(result), [this, id = *id,
-                                      page = static_cast<int>(*page),
-                                      width = static_cast<int>(*width),
-                                      height = static_cast<int>(*height)] {
+  const auto toInt = [](int64_t v) {
+    return static_cast<int>(std::clamp<int64_t>(v, INT_MIN, INT_MAX));
+  };
+  // Optional: the part of the sheet to render, in its pixels.
+  std::optional<RECT> region;
+  const auto left = GetIntArg(args, "regionLeft");
+  const auto top = GetIntArg(args, "regionTop");
+  const auto right = GetIntArg(args, "regionRight");
+  const auto bottom = GetIntArg(args, "regionBottom");
+  if (left && top && right && bottom)
+    region = RECT{toInt(*left), toInt(*top), toInt(*right), toInt(*bottom)};
+  PostPreviewTask(std::move(result), [this, id = *id, page = toInt(*page),
+                                      width = toInt(*width),
+                                      height = toInt(*height), region] {
     auto it = previews_.find(id);
     auto png = it == previews_.end()
                    ? std::vector<uint8_t>{}
-                   : it->second->RenderPage(page, width, height);
+                   : it->second->RenderPage(page, width, height,
+                                            region ? &*region : nullptr);
     return png.empty() ? flutter::EncodableValue()
                        : flutter::EncodableValue(std::move(png));
   });
@@ -440,6 +453,27 @@ void FlutterPrintPlugin::HandleGetDefaultPaperSize(
     return name.empty() ? flutter::EncodableValue()
                         : flutter::EncodableValue(name);
   });
+}
+
+void FlutterPrintPlugin::HandleGetAccentColors(WinResult result) {
+  // 8 RGBX colors, lightest first. The last one is unused.
+  BYTE palette[32] = {};
+  DWORD size = sizeof(palette);
+  if (RegGetValueW(HKEY_CURRENT_USER,
+                   L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent",
+                   L"AccentPalette", RRF_RT_REG_BINARY, nullptr, palette,
+                   &size) != ERROR_SUCCESS ||
+      size != sizeof(palette)) {
+    result->Success();
+    return;
+  }
+  flutter::EncodableList colors;
+  for (int i = 0; i < 7; ++i) {
+    const BYTE* c = palette + i * 4;
+    const int64_t argb = 0xFF000000LL | (c[0] << 16) | (c[1] << 8) | c[2];
+    colors.push_back(flutter::EncodableValue(argb));
+  }
+  result->Success(flutter::EncodableValue(colors));
 }
 
 void FlutterPrintPlugin::HandleOpenInDefaultApp(const flutter::EncodableMap& args,
