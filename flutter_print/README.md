@@ -8,6 +8,11 @@ types are handled differently on each platform, see [File types](#file-types).
 
 **Widgets** are rendered as an image in a single-page PDF.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/llfbandit/flutter_print/main/img/win_preview.png" alt="Print preview on Windows" height="360">
+  <img src="https://raw.githubusercontent.com/llfbandit/flutter_print/main/img/android_preview.png" alt="Print preview on Android" height="360">
+</p>
+
 ---
 
 ## Usage
@@ -182,6 +187,14 @@ Add the print entitlement to `macos/Runner/Release.entitlements` and
 ```
 
 The plugin works in sandboxed apps and needs no other entitlement.
+
+### Windows
+
+- x64 only for now.
+- The first build downloads [PDFium binaries](https://github.com/bblanchon/pdfium-binaries) and bundles
+`pdfium.dll` with your app.
+- Ship PDFium's licence notices with your app: `LICENSE` and `licenses/` in
+`build/windows/x64/_deps/pdfium-src/`.
 
 ### Linux
 

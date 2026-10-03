@@ -6,7 +6,7 @@
 
 #include "generated_plugin_registrant.h"
 
-#include <flutter_print_windows/flutter_print_plugin_c_api.h>
+#include <flutter_print/flutter_print_plugin_c_api.h>
 
 void RegisterPlugins(flutter::PluginRegistry* registry) {
   FlutterPrintPluginCApiRegisterWithRegistrar(

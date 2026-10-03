@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.14)
 
-set(PROJECT_NAME "flutter_print_windows")
+set(PROJECT_NAME "flutter_print")
 project(${PROJECT_NAME} LANGUAGES CXX)
 
 cmake_policy(VERSION 3.14...3.25)
 
-set(PLUGIN_NAME "flutter_print_windows_plugin")
+set(PLUGIN_NAME "flutter_print_plugin")
 
 # ---------------------------------------------------------------------------
 # PDFium — prebuilt binaries from https://github.com/bblanchon/pdfium-binaries
@@ -35,7 +35,7 @@ list(APPEND PLUGIN_SOURCES
 )
 
 add_library(${PLUGIN_NAME} SHARED
-  "include/flutter_print_windows/flutter_print_plugin_c_api.h"
+  "include/flutter_print/flutter_print_plugin_c_api.h"
   "flutter_print_plugin_c_api.cpp"
   ${PLUGIN_SOURCES}
 )
@@ -63,7 +63,7 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
 )
 
 # pdfium.dll must ship alongside the plugin.
-set(flutter_print_windows_bundled_libraries
+set(flutter_print_bundled_libraries
   "${pdfium_SOURCE_DIR}/bin/pdfium.dll"
   PARENT_SCOPE
 )

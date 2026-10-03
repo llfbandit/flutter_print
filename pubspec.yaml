@@ -14,7 +14,6 @@ workspace:
   - flutter_print/example
   - flutter_print_platform_interface
   - flutter_print_web
-  - flutter_print_windows
 
 melos:
   # Don't generate intellij files

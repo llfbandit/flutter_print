@@ -21,7 +21,6 @@ dependencies:
 
   flutter_print_platform_interface: ^0.3.0
   flutter_print_web: ^0.3.0
-  flutter_print_windows: ^0.3.0
 
 dev_dependencies:
   flutter_test:
@@ -44,4 +43,6 @@ flutter:
       web:
         default_package: flutter_print_web
       windows:
-        default_package: flutter_print_windows
+        pluginClass: FlutterPrintPluginCApi
+        dartPluginClass: FlutterPrintWindows
+        dartFileName: src/windows/flutter_print_windows.dart

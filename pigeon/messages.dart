@@ -24,8 +24,8 @@ import 'package:pigeon/pigeon.dart';
     gobjectHeaderOut: 'flutter_print/linux/messages.h',
     gobjectSourceOut: 'flutter_print/linux/messages.cc',
     gobjectOptions: GObjectOptions(module: 'FlutterPrint'),
-    cppHeaderOut: 'flutter_print_windows/windows/messages.h',
-    cppSourceOut: 'flutter_print_windows/windows/messages.cpp',
+    cppHeaderOut: 'flutter_print/windows/messages.h',
+    cppSourceOut: 'flutter_print/windows/messages.cpp',
     cppOptions: CppOptions(namespace: 'flutter_print'),
   ),
 )

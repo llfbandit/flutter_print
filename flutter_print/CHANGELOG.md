@@ -10,9 +10,15 @@
 * fix(ios): Reject a print job while another one runs, instead of changing the open dialog.
 * fix(ios): Present from the Flutter view, and anchor the iPad popover to its centre.
 * fix(ios): Fail with `PRINTER_ERROR` for an invalid or unreachable `printerAddress`.
-* feat(windows): Detect file types by content. Print all text files, WIC images (HEIC, AVIF, JPEG XL…), all TIFF pages, and EMF/WMF files, with all options.
 * feat(ios): Use photo output for images.
 * feat(ios): Report availability, colour and duplex support of the printer from `pickPrinter`.
+* feat(windows): Detect file types by content. Print all text files, WIC images (HEIC, AVIF, JPEG XL…), all TIFF pages, and EMF/WMF files, with all options.
+* feat(windows): Preview each sheet as the printer prints it, with its margins, and zoom in the preview.
+* fix(windows): Open HTML, SVG and RTF files in their default app instead of printing their source.
+* fix(windows): Default the print dialog to the caller's printer and the printer's paper size.
+* fix(windows): Report cancelled or failed print jobs.
+* fix(windows): Start each copy on a new sheet in duplex when the driver can't make the copies.
+* fix(windows): Allow more copies than the driver makes in the print dialog.
 
 ## 0.4.0
 * feat: Make print options nullable to get system defaults.

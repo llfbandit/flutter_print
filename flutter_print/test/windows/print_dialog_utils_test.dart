@@ -1,5 +1,5 @@
 import 'package:flutter_print_platform_interface/flutter_print_platform_interface.dart';
-import 'package:flutter_print_windows/src/print_preview/print_dialog_utils.dart';
+import 'package:flutter_print/src/windows/print_preview/print_dialog_utils.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 String? parse(String input, int pageCount) {
