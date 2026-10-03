@@ -847,7 +847,7 @@ static std::optional<FlutterError> CheckAnyPageSelected(
 }
 
 std::optional<FlutterError> RenderToDC(HDC hdc, const std::wstring& wPath,
-                                       FileKind kind, int copies,
+                                       FileKind kind, int copies, bool duplex,
                                        const PageRanges& ranges) {
   std::optional<FlutterError> error;
   auto doc = OpenDocument(hdc, wPath, kind, error);
@@ -865,23 +865,34 @@ std::optional<FlutterError> RenderToDC(HDC hdc, const std::wstring& wPath,
 
   // Cancel the job when a page fails, rather than print it blank.
   const PageTarget target = PrinterTarget(hdc);
+  // Draws page |i|, or a blank page when -1.
+  const auto printPage = [&](int i) -> std::optional<FlutterError> {
+    if (StartPage(hdc) <= 0) {
+      AbortDoc(hdc);
+      return FlutterError("PRINT_ERROR", "StartPage failed");
+    }
+    if (i >= 0 && !doc->DrawPage(target, i)) {
+      AbortDoc(hdc);
+      return FlutterError("PRINT_ERROR",
+                          "Cannot draw page " + std::to_string(i + 1));
+    }
+    // Fails when the job is cancelled or the spooler fails.
+    if (EndPage(hdc) <= 0) {
+      AbortDoc(hdc);
+      return FlutterError("PRINT_ERROR", "EndPage failed");
+    }
+    return std::nullopt;
+  };
   for (int c = 0; c < copies; ++c) {
+    int printed = 0;
     for (int i = 0; i < pageCount; ++i) {
       if (!PageSelected(i + 1, ranges)) continue;
-      if (StartPage(hdc) <= 0) {
-        AbortDoc(hdc);
-        return FlutterError("PRINT_ERROR", "StartPage failed");
-      }
-      if (!doc->DrawPage(target, i)) {
-        AbortDoc(hdc);
-        return FlutterError("PRINT_ERROR",
-                            "Cannot draw page " + std::to_string(i + 1));
-      }
-      // Fails when the job is cancelled or the spooler fails.
-      if (EndPage(hdc) <= 0) {
-        AbortDoc(hdc);
-        return FlutterError("PRINT_ERROR", "EndPage failed");
-      }
+      if (auto err = printPage(i)) return err;
+      ++printed;
+    }
+    // On both sides, add a blank back so the next copy starts on a new sheet.
+    if (duplex && printed % 2 == 1 && c + 1 < copies) {
+      if (auto err = printPage(-1)) return err;
     }
   }
   if (EndDoc(hdc) <= 0) return FlutterError("PRINT_ERROR", "EndDoc failed");

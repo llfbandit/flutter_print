@@ -34,12 +34,17 @@ std::vector<BYTE> GetDefaultDevMode(const std::wstring& printerName);
 // it is not one of them.
 std::string DefaultPaperName(const std::wstring& printerName);
 
+// The copies the driver can't make itself, which the app draws.
+struct SoftwareCopies {
+  int count = 1;         // 1 when the driver makes them all.
+  bool duplex = false;   // True when the sheets print on both sides.
+};
+
 // Creates a printer DC with |options| applied, or with the printer defaults
 // when |options| is null. The caller must DeleteDC it.
-// |out_software_copies| gets the copies the driver can't make itself (1 when
-// it makes them all). Pass it to RenderToDC.
+// |out_copies| gets the copies to pass to RenderToDC.
 HDC CreatePrinterDC(const std::wstring& printerName, const PrintOptions* options,
-                    int* out_software_copies = nullptr);
+                    SoftwareCopies* out_copies = nullptr);
 
 // Like CreatePrinterDC, but an information context: it can't print, but lays
 // pages out the same, at a lower cost. The caller must DeleteDC it.

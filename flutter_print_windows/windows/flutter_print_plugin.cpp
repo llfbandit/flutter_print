@@ -276,13 +276,13 @@ std::optional<FlutterError> FlutterPrintPlugin::PrintInternal(
     return FlutterError("PRINTER_ERROR", "No printer available");
 
   // Null |options| keeps the printer defaults.
-  int softwareCopies = 1;
-  HDC hdc = CreatePrinterDC(wPrinter, options, &softwareCopies);
+  SoftwareCopies copies;
+  HDC hdc = CreatePrinterDC(wPrinter, options, &copies);
   if (!hdc)
     return FlutterError("PRINTER_ERROR",
                         "Cannot create printer DC for: " +
                             WideToUtf8(wPrinter.c_str()));
-  auto err = RenderToDC(hdc, wPath, kind, softwareCopies,
+  auto err = RenderToDC(hdc, wPath, kind, copies.count, copies.duplex,
                         ExtractPageRanges(options));
   DeleteDC(hdc);
   return err;

@@ -97,7 +97,7 @@ static std::vector<BYTE> ReadDevMode(HANDLE hPrinter,
 // Returns the printer's DEVMODE with |options| applied, or empty on error.
 static std::vector<BYTE> BuildDevMode(const std::wstring& printerName,
                                       const PrintOptions* options,
-                                      int* out_software_copies) {
+                                      SoftwareCopies* out_copies) {
   // When the driver can't make all the copies, ask it for one and draw the
   // copies in software.
   const int64_t* copiesOpt = options ? options->copies() : nullptr;
@@ -107,8 +107,7 @@ static std::vector<BYTE> BuildDevMode(const std::wstring& printerName,
                 : 1;
   const bool driverCopies =
       requestedCopies == 1 || GetDriverMaxCopies(printerName) >= requestedCopies;
-  if (out_software_copies)
-    *out_software_copies = driverCopies ? 1 : requestedCopies;
+  if (out_copies) *out_copies = {driverCopies ? 1 : requestedCopies, false};
 
   HANDLE hPrinter = nullptr;
   if (!OpenPrinterW(const_cast<LPWSTR>(printerName.c_str()), &hPrinter, nullptr))
@@ -123,6 +122,11 @@ static std::vector<BYTE> BuildDevMode(const std::wstring& printerName,
     DocumentPropertiesW(nullptr, hPrinter,
                         const_cast<LPWSTR>(printerName.c_str()),
                         dm, dm, DM_IN_BUFFER | DM_OUT_BUFFER);
+  }
+  if (out_copies && !buf.empty()) {
+    const auto* dm = reinterpret_cast<const DEVMODE*>(buf.data());
+    out_copies->duplex =
+        (dm->dmFields & DM_DUPLEX) && dm->dmDuplex != DMDUP_SIMPLEX;
   }
   ClosePrinter(hPrinter);
   return buf;
@@ -145,8 +149,8 @@ std::string DefaultPaperName(const std::wstring& printerName) {
 
 HDC CreatePrinterDC(const std::wstring& printerName,
                     const PrintOptions* options,
-                    int* out_software_copies) {
-  std::vector<BYTE> dm = BuildDevMode(printerName, options, out_software_copies);
+                    SoftwareCopies* out_copies) {
+  std::vector<BYTE> dm = BuildDevMode(printerName, options, out_copies);
   return CreateDCW(L"WINSPOOL", printerName.c_str(), nullptr,
                    dm.empty() ? nullptr : reinterpret_cast<DEVMODE*>(dm.data()));
 }

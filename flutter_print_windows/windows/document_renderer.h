@@ -27,10 +27,11 @@ enum class FileKind {
 FileKind DetectFileKind(const std::wstring& path);
 
 // Prints |wPath| to |hdc|. |kind| must not be kOther.
-// |copies| is the number of copies to draw (see CreatePrinterDC).
+// |copies| is the number of copies to draw (see CreatePrinterDC). With
+// |duplex|, each copy starts on a new sheet.
 // Returns INVALID_PAGE_RANGE when |ranges| selects no page.
 std::optional<FlutterError> RenderToDC(HDC hdc, const std::wstring& wPath,
-                                       FileKind kind, int copies,
+                                       FileKind kind, int copies, bool duplex,
                                        const PageRanges& ranges);
 
 // Prints |wPath| with its default app, on |printerName| when not empty.
