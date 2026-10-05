@@ -43,12 +43,11 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE flutter)
 target_link_libraries(${PLUGIN_NAME} PRIVATE PkgConfig::GTK)
 
 # CUPS is the standard Linux/Unix printing subsystem.
-pkg_check_modules(CUPS cups)
-if(CUPS_FOUND)
-  target_include_directories(${PLUGIN_NAME} PRIVATE ${CUPS_INCLUDE_DIRS})
-  target_link_libraries(${PLUGIN_NAME} PRIVATE ${CUPS_LIBRARIES})
-  target_compile_definitions(${PLUGIN_NAME} PRIVATE HAS_CUPS)
-endif()
+# FindCups avoids pkg-config: some distros' cups.pc requires -dev packages
+# that libcups2-dev doesn't install.
+find_package(Cups REQUIRED)
+target_include_directories(${PLUGIN_NAME} PRIVATE ${CUPS_INCLUDE_DIR})
+target_link_libraries(${PLUGIN_NAME} PRIVATE ${CUPS_LIBRARIES})
 
 # List of absolute paths to libraries that should be bundled with the plugin.
 # This list could contain prebuilt libraries, or libraries created by an

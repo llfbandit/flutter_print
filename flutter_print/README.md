@@ -115,20 +115,19 @@ Options a platform doesn't support are silently ignored.
 | Option           | Android | iOS | macOS | Windows | Linux | Web |
 |------------------|---------|-----|-------|---------|-------|-----|
 | `printerAddress` |         | ✔️¹ | ✔️    | ✔️      | ✔️    |     |
-| `pageSize`       | ✔️⁵     |     | ✔️    | ✔️²     | ✔️³   |     |
-| `margins`        | ✔️⁵     |     | ✔️    |         |       |     |
+| `pageSize`       | ✔️⁴     |     | ✔️    | ✔️²     | ✔️    |     |
+| `margins`        | ✔️⁴     |     | ✔️    |         |       |     |
 | `copies`         |         |     | ✔️    | ✔️²     | ✔️    |     |
 | `landscape`      | ✔️      | ✔️  | ✔️    | ✔️²     | ✔️    |     |
-| `color`          | ✔️      | ✔️  | ✔️⁴   | ✔️²     | ✔️    |     |
-| `duplexMode`     | ✔️⁵     | ✔️  | ✔️    | ✔️²     | ✔️    |     |
+| `color`          | ✔️      | ✔️  | ✔️³   | ✔️²     | ✔️    |     |
+| `duplexMode`     | ✔️⁴     | ✔️  | ✔️    | ✔️²     | ✔️    |     |
 | `pageRanges`     |         |     | ✔️    | ✔️²     | ✔️    |     |
 
 ¹ `print` only, with an address from `FlutterPrint.ios?.pickPrinter()`. `printPreview` ignores it.  
 ² For PDF, image, EMF/WMF and text files only.  
-³ Requires the CUPS development libraries at build time (see [Linux](#linux)).  
-⁴ The print panel shows the requested `color` when the printer driver has
+³ The print panel shows the requested `color` when the printer driver has
 colour presets (AirPrint and most drivers).  
-⁵ For PDF files only.
+⁴ For PDF files only.
 
 On macOS, the options are applied to the print panel too, so the user starts
 from the requested settings.
@@ -198,8 +197,8 @@ The plugin works in sandboxed apps and needs no other entitlement.
 
 ### Linux
 
-Printer enumeration and direct printing require the **CUPS** development
-libraries. Install them before building the application:
+The plugin requires the **CUPS** development libraries. Install them before
+building the application:
 
 ```sh
 # Debian / Ubuntu
@@ -212,6 +211,5 @@ sudo dnf install cups-devel
 sudo pacman -S cups
 ```
 
-Without them the plugin still compiles, but `listPrinters` returns an empty
-list and `print` falls back to the `lp` command-line tool (which requires CUPS
-to be running), without `pageSize` support.
+Without them the build fails. At runtime, the CUPS service must be running to
+list printers and print.

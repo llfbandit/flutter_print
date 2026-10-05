@@ -3,13 +3,11 @@
 #include <flutter_linux/flutter_linux.h>
 #include <gtk/gtk.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <glib/gstdio.h>
 #include <cstdlib>
 #include <cstring>
 #include <unistd.h>
-
-#ifdef HAS_CUPS
 #include <cups/cups.h>
-#endif
 
 #include "messages.h"
 
@@ -31,7 +29,6 @@ static void flutter_print_plugin_class_init(FlutterPrintPluginClass* klass) {}
 
 static void flutter_print_plugin_init(FlutterPrintPlugin* self) {}
 
-#ifdef HAS_CUPS
 // Returns true for formats CUPS typically cannot rasterise natively.
 static bool needs_transcode(const char* path) {
   const char* dot = strrchr(path, '.');
@@ -62,7 +59,6 @@ static gchar* transcode_to_png(const char* path) {
   }
   return static_cast<gchar*>(g_steal_pointer(&tmp));
 }
-#endif
 
 // ---------------------------------------------------------------------------
 // Print / PrintPreview
@@ -126,7 +122,6 @@ static void handle_print(
     return;
   }
 
-#ifdef HAS_CUPS
   // options may be null when the caller omits them; in that case no CUPS
   // options are added and the printer's default settings apply.
   const gchar* printer_address =
@@ -209,62 +204,6 @@ static void handle_print(
     return;
   }
 
-#else
-  // No CUPS at build time: use the lp command-line tool.
-  // Build argv safely — no shell, no injection risk.
-  // options may be null when the caller omits them; in that case no lp options
-  // are passed and the printer's default settings apply.
-  const gchar* printer_address =
-      options ? flutter_print_print_options_get_printer_address(options) : nullptr;
-  const int64_t* copies =
-      options ? flutter_print_print_options_get_copies(options) : nullptr;
-  const gboolean* landscape =
-      options ? flutter_print_print_options_get_landscape(options) : nullptr;
-  const gboolean* color =
-      options ? flutter_print_print_options_get_color(options) : nullptr;
-
-  // Heap-allocated strings that must outlive the spawn call.
-  g_autofree gchar* copies_str = (copies && *copies > 1)
-      ? g_strdup_printf("%" G_GINT64_FORMAT, *copies) : nullptr;
-
-  g_autofree gchar* page_ranges = build_page_ranges(options);
-  g_autofree gchar* page_ranges_opt = page_ranges
-      ? g_strdup_printf("page-ranges=%s", page_ranges) : nullptr;
-
-  const char* sides = duplex_sides(options);
-
-  g_autoptr(GPtrArray) argv = g_ptr_array_new();
-  auto add = [&](const gchar* flag, const gchar* value) {
-    g_ptr_array_add(argv, const_cast<gchar*>(flag));
-    g_ptr_array_add(argv, const_cast<gchar*>(value));
-  };
-  g_ptr_array_add(argv, const_cast<gchar*>("lp"));
-  if (printer_address && printer_address[0] != '\0') add("-d", printer_address);
-  if (copies_str) add("-n", copies_str);
-  if (landscape && *landscape) add("-o", "orientation-requested=4");
-  if (color && !*color) add("-o", "print-color-mode=monochrome");
-  if (sides) add("-o", sides);
-  if (page_ranges_opt) add("-o", page_ranges_opt);
-  g_ptr_array_add(argv, const_cast<gchar*>(file_path));
-  g_ptr_array_add(argv, nullptr);
-
-  g_autoptr(GError) err = nullptr;
-  gint exit_status = 0;
-  bool ok = g_spawn_sync(nullptr,
-                         reinterpret_cast<gchar**>(argv->pdata),
-                         nullptr,
-                         G_SPAWN_SEARCH_PATH,
-                         nullptr, nullptr,
-                         nullptr, nullptr,
-                         &exit_status, &err);
-
-  if (!ok || exit_status != 0) {
-    flutter_print_flutter_print_api_respond_error_print(
-        response_handle, "PRINT_ERROR", "lp command failed", nullptr);
-    return;
-  }
-#endif
-
   flutter_print_flutter_print_api_respond_print(response_handle);
 }
 
@@ -291,7 +230,6 @@ static void handle_print_preview(
 // ListPrinters
 // ---------------------------------------------------------------------------
 
-#ifdef HAS_CUPS
 typedef struct {
   FlutterPrintFlutterPrintApiResponseHandle* response_handle;
   FlValue* result_list;
@@ -325,7 +263,7 @@ static gpointer list_printers_worker(gpointer user_data) {
                              ? info_str
                              : dest.name;
 
-    // address: CUPS queue name — what gets passed to cupsPrintFile / lp -d.
+    // address: CUPS queue name — what gets passed to cupsPrintFile.
     const gchar* address = dest.name;
 
     // colorCapability
@@ -382,7 +320,6 @@ static gpointer list_printers_worker(gpointer user_data) {
   g_idle_add(list_printers_respond_idle, reply);
   return nullptr;
 }
-#endif  // HAS_CUPS
 
 static void handle_pick_printer(
     FlutterPrintFlutterPrintApiResponseHandle* response_handle,
@@ -393,15 +330,9 @@ static void handle_pick_printer(
 static void handle_list_printers(
     FlutterPrintFlutterPrintApiResponseHandle* response_handle,
     gpointer user_data) {
-#ifdef HAS_CUPS
   ListPrintersReply* reply = g_new0(ListPrintersReply, 1);
   reply->response_handle = response_handle;
   g_thread_new("flutter_print_list_printers", list_printers_worker, reply);
-#else
-  FlValue* list = fl_value_new_list();
-  flutter_print_flutter_print_api_respond_list_printers(response_handle, list);
-  fl_value_unref(list);
-#endif
 }
 
 // ---------------------------------------------------------------------------
