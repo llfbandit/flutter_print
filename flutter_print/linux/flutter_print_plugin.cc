@@ -122,16 +122,31 @@ static void handle_print(
     return;
   }
 
-  // options may be null when the caller omits them; in that case no CUPS
-  // options are added and the printer's default settings apply.
+  // cupsGetNamedDest applies lpoptions: the user's default printer and the
+  // options saved for it. A null name returns the default printer.
   const gchar* printer_address =
       options ? flutter_print_print_options_get_printer_address(options) : nullptr;
-  const gchar* dest = (printer_address && printer_address[0] != '\0')
-                          ? printer_address
-                          : cupsGetDefault();
+  if (printer_address && printer_address[0] == '\0') printer_address = nullptr;
+  cups_dest_t* dest = cupsGetNamedDest(CUPS_HTTP_DEFAULT, printer_address,
+                                       nullptr);
+  if (!dest) {
+    g_autofree gchar* msg =
+        printer_address ? g_strdup_printf("Unknown printer: %s", printer_address)
+                        : g_strdup("No default printer");
+    flutter_print_flutter_print_api_respond_error_print(
+        response_handle, "PRINTER_ERROR", msg, nullptr);
+    return;
+  }
 
+  // Start from the printer's saved options; the caller's options override them.
+  // options may be null when the caller omits them; then the printer's
+  // settings apply.
   int num_options = 0;
   cups_option_t* cups_opts = nullptr;
+  for (int i = 0; i < dest->num_options; i++) {
+    num_options = cupsAddOption(dest->options[i].name, dest->options[i].value,
+                                num_options, &cups_opts);
+  }
 
   const int64_t* copies =
       options ? flutter_print_print_options_get_copies(options) : nullptr;
@@ -194,9 +209,10 @@ static void handle_print(
                                      : nullptr;
   const char* print_path = transcoded ? transcoded : file_path;
 
-  int job_id = cupsPrintFile(dest, print_path, "Flutter Print Job",
-                              num_options, cups_opts);
+  int job_id = cupsPrintFile(dest->name, print_path, "Flutter Print Job",
+                             num_options, cups_opts);
   cupsFreeOptions(num_options, cups_opts);
+  cupsFreeDests(1, dest);
 
   if (transcoded) g_remove(transcoded);
 
