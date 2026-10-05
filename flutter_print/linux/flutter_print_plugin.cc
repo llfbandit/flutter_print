@@ -144,15 +144,17 @@ static void handle_print(
   // legacy CUPS-only "landscape" shorthand.
   const gboolean* landscape =
       options ? flutter_print_print_options_get_landscape(options) : nullptr;
-  if (landscape && *landscape) {
-    num_options = cupsAddOption("orientation-requested", "4",
+  if (landscape) {
+    num_options = cupsAddOption("orientation-requested", *landscape ? "4" : "3",
                                 num_options, &cups_opts);
   }
 
+  // Send both values so a printer that defaults to mono still prints in colour.
   const gboolean* color =
       options ? flutter_print_print_options_get_color(options) : nullptr;
-  if (color && !*color) {
-    num_options = cupsAddOption("print-color-mode", "monochrome",
+  if (color) {
+    num_options = cupsAddOption("print-color-mode",
+                                *color ? "color" : "monochrome",
                                 num_options, &cups_opts);
   }
 
