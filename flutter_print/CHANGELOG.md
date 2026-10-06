@@ -8,6 +8,7 @@
 * fix(linux): Convert WebP and HEIC images in a temp file with a random name.
 * fix(linux): Report colour and duplex support in `listPrinters`.
 * fix(linux): Fail with `UNSUPPORTED_FILE` when a WebP or HEIC image can't be converted, instead of sending it to CUPS.
+* fix(linux): Print on a worker thread, so the app doesn't freeze while a job is sent.
 
 ## 0.5.0
 * feat: Add page range print option (Windows, macOS, Linux).
