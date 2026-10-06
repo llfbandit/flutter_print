@@ -5,6 +5,7 @@
 * fix(linux): Send color and landscape to CUPS.
 * fix(linux): Use the user's default printer and saved printer options. Fail with `PRINTER_ERROR` for an unknown printer.
 * fix(linux): Select the paper by its size, so B4, B5, JIS, C5 and DL print on the right paper.
+* fix(linux): Convert WebP and HEIC images in a temp file with a random name.
 
 ## 0.5.0
 * feat: Add page range print option (Windows, macOS, Linux).

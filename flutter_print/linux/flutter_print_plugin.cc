@@ -51,11 +51,20 @@ static gchar* transcode_to_png(const char* path) {
     return nullptr;
   }
 
-  g_autofree gchar* tmp = g_strdup_printf("%s/flutter_print_%d.png",
-                                           g_get_tmp_dir(), (int)getpid());
+  // g_file_open_tmp creates a new file with a random name, so another user
+  // can't plant a symlink at the path.
+  g_autofree gchar* tmp = nullptr;
+  int fd = g_file_open_tmp("flutter_print_XXXXXX.png", &tmp, &err);
+  if (fd < 0) {
+    g_warning("flutter_print: failed to create temp PNG: %s",
+               err ? err->message : "(unknown)");
+    return nullptr;
+  }
+  close(fd);
   if (!gdk_pixbuf_save(pixbuf, tmp, "png", &err, nullptr)) {
     g_warning("flutter_print: failed to save temp PNG: %s",
                err ? err->message : "(unknown)");
+    g_remove(tmp);
     return nullptr;
   }
   return static_cast<gchar*>(g_steal_pointer(&tmp));
