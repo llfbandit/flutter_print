@@ -8,6 +8,7 @@
 #include <cstring>
 #include <unistd.h>
 #include <cups/cups.h>
+#include <cups/pwg.h>
 
 #include "messages.h"
 
@@ -180,18 +181,18 @@ static void handle_print(
   FlutterPrintPageSize* page_size =
       options ? flutter_print_print_options_get_page_size(options) : nullptr;
   if (page_size) {
+    // Prefer the size: names like "B4" or "DL" are ambiguous or unknown to
+    // CUPS. pwgMediaForSize returns the standard PWG name, or a custom size.
     const gchar* size_name = flutter_print_page_size_get_name(page_size);
-    if (size_name && size_name[0] != '\0') {
+    double* width  = flutter_print_page_size_get_width(page_size);
+    double* height = flutter_print_page_size_get_height(page_size);
+    pwg_media_t* media = (width && height && *width > 0 && *height > 0)
+        ? pwgMediaForSize((int)(*width * 100 + 0.5), (int)(*height * 100 + 0.5))
+        : nullptr;
+    if (media) {
+      num_options = cupsAddOption("media", media->pwg, num_options, &cups_opts);
+    } else if (size_name && size_name[0] != '\0') {
       num_options = cupsAddOption("media", size_name, num_options, &cups_opts);
-    } else {
-      double* width  = flutter_print_page_size_get_width(page_size);
-      double* height = flutter_print_page_size_get_height(page_size);
-      if (width && height && *width > 0 && *height > 0) {
-        int w_pts = (int)(*width  * 72.0 / 25.4 + 0.5);
-        int h_pts = (int)(*height * 72.0 / 25.4 + 0.5);
-        g_autofree gchar* custom = g_strdup_printf("Custom.%dx%d", w_pts, h_pts);
-        num_options = cupsAddOption("media", custom, num_options, &cups_opts);
-      }
     }
   }
 
