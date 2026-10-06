@@ -41,29 +41,19 @@ static bool needs_transcode(const char* path) {
 
 // Decode the image with GDK-Pixbuf and save it as a temporary PNG.
 // Returns a heap-allocated file path on success (caller must g_free + unlink),
-// or nullptr if GDK-Pixbuf cannot load the format (codec not installed).
-static gchar* transcode_to_png(const char* path) {
-  g_autoptr(GError) err = nullptr;
-  g_autoptr(GdkPixbuf) pixbuf = gdk_pixbuf_new_from_file(path, &err);
-  if (!pixbuf) {
-    g_warning("flutter_print: GDK-Pixbuf cannot decode %s: %s",
-               path, err ? err->message : "(unknown)");
-    return nullptr;
-  }
+// or nullptr and sets |error|. GDK_PIXBUF_ERROR_UNKNOWN_TYPE means the
+// pixbuf loader for the format is not installed.
+static gchar* transcode_to_png(const char* path, GError** error) {
+  g_autoptr(GdkPixbuf) pixbuf = gdk_pixbuf_new_from_file(path, error);
+  if (!pixbuf) return nullptr;
 
   // g_file_open_tmp creates a new file with a random name, so another user
   // can't plant a symlink at the path.
   g_autofree gchar* tmp = nullptr;
-  int fd = g_file_open_tmp("flutter_print_XXXXXX.png", &tmp, &err);
-  if (fd < 0) {
-    g_warning("flutter_print: failed to create temp PNG: %s",
-               err ? err->message : "(unknown)");
-    return nullptr;
-  }
+  int fd = g_file_open_tmp("flutter_print_XXXXXX.png", &tmp, error);
+  if (fd < 0) return nullptr;
   close(fd);
-  if (!gdk_pixbuf_save(pixbuf, tmp, "png", &err, nullptr)) {
-    g_warning("flutter_print: failed to save temp PNG: %s",
-               err ? err->message : "(unknown)");
+  if (!gdk_pixbuf_save(pixbuf, tmp, "png", error, nullptr)) {
     g_remove(tmp);
     return nullptr;
   }
@@ -132,6 +122,26 @@ static void handle_print(
     return;
   }
 
+  // For formats CUPS cannot rasterise (WebP, HEIC), transcode to PNG first
+  // using GDK-Pixbuf, which supports these formats when the system pixbuf
+  // loaders are installed (webp-pixbuf-loader, heif-pixbuf-loader).
+  g_autofree gchar* transcoded = nullptr;
+  if (needs_transcode(file_path)) {
+    g_autoptr(GError) err = nullptr;
+    transcoded = transcode_to_png(file_path, &err);
+    if (!transcoded) {
+      bool unsupported =
+          g_error_matches(err, GDK_PIXBUF_ERROR, GDK_PIXBUF_ERROR_UNKNOWN_TYPE);
+      g_autofree gchar* msg =
+          g_strdup_printf("Cannot convert %s: %s", file_path, err->message);
+      flutter_print_flutter_print_api_respond_error_print(
+          response_handle, unsupported ? "UNSUPPORTED_FILE" : "PRINT_ERROR",
+          msg, nullptr);
+      return;
+    }
+  }
+  const char* print_path = transcoded ? transcoded : file_path;
+
   // cupsGetNamedDest applies lpoptions: the user's default printer and the
   // options saved for it. A null name returns the default printer.
   const gchar* printer_address =
@@ -143,6 +153,7 @@ static void handle_print(
     g_autofree gchar* msg =
         printer_address ? g_strdup_printf("Unknown printer: %s", printer_address)
                         : g_strdup("No default printer");
+    if (transcoded) g_remove(transcoded);
     flutter_print_flutter_print_api_respond_error_print(
         response_handle, "PRINTER_ERROR", msg, nullptr);
     return;
@@ -210,14 +221,6 @@ static void handle_print(
     num_options = cupsAddOption("page-ranges", page_ranges, num_options,
                                 &cups_opts);
   }
-
-  // For formats CUPS cannot rasterise (WebP, HEIC), transcode to PNG first
-  // using GDK-Pixbuf, which supports these formats when the system pixbuf
-  // loaders are installed (webp-pixbuf-loader, heif-pixbuf-loader).
-  g_autofree gchar* transcoded = needs_transcode(file_path)
-                                     ? transcode_to_png(file_path)
-                                     : nullptr;
-  const char* print_path = transcoded ? transcoded : file_path;
 
   int job_id = cupsPrintFile(dest->name, print_path, "Flutter Print Job",
                              num_options, cups_opts);
