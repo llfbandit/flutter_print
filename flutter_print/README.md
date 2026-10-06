@@ -9,8 +9,8 @@ types are handled differently on each platform, see [File types](#file-types).
 **Widgets** are rendered as an image in a single-page PDF.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/llfbandit/flutter_print/main/img/win_preview.png" alt="Print preview on Windows" height="360">
-  <img src="https://raw.githubusercontent.com/llfbandit/flutter_print/main/img/android_preview.png" alt="Print preview on Android" height="360">
+<img src="https://raw.githubusercontent.com/llfbandit/flutter_print/main/img/win_preview.png" alt="Print preview on Windows" width="538">
+<img src="https://raw.githubusercontent.com/llfbandit/flutter_print/main/img/android_preview.png" alt="Print preview on Android" width="162">
 </p>
 
 ---
