@@ -294,6 +294,13 @@ static void handle_print_preview(
     FlutterPrintPrintOptions* options,
     FlutterPrintFlutterPrintApiResponseHandle* response_handle,
     gpointer user_data) {
+  if (!g_file_test(file_path, G_FILE_TEST_EXISTS)) {
+    g_autofree gchar* msg = g_strdup_printf("File not found: %s", file_path);
+    flutter_print_flutter_print_api_respond_error_print_preview(
+        response_handle, "FILE_NOT_FOUND", msg, nullptr);
+    return;
+  }
+
   g_autoptr(GError) err = nullptr;
   g_autoptr(GSubprocess) proc =
       g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &err, "xdg-open", file_path, nullptr);
