@@ -294,23 +294,26 @@ static gpointer list_printers_worker(gpointer user_data) {
     // address: CUPS queue name — what gets passed to cupsPrintFile.
     const gchar* address = dest.name;
 
-    // colorCapability
+    // cupsGetDests doesn't return the supported values, and the colour and
+    // duplex bits of printer-type don't match the driver. Ask the printer.
+    // Both stay unknown when it doesn't answer.
     FlutterPrintColorCapability color_capability =
         FLUTTER_PRINT_PLATFORM_INTERFACE_COLOR_CAPABILITY_UNKNOWN;
-    const char* color_str = option("color-supported");
-    if (color_str) {
-      color_capability = (strcmp(color_str, "true") == 0)
-          ? FLUTTER_PRINT_PLATFORM_INTERFACE_COLOR_CAPABILITY_SUPPORTED
-          : FLUTTER_PRINT_PLATFORM_INTERFACE_COLOR_CAPABILITY_MONOCHROME;
-    }
-
-    // supportsDuplex: check sides-supported attribute.
     gboolean duplex_val = FALSE;
     gboolean* duplex_ptr = nullptr;
-    const char* sides_str = option("sides-supported");
-    if (sides_str) {
-      duplex_val = (strstr(sides_str, "two-sided") != nullptr);
+    cups_dinfo_t* info = cupsCopyDestInfo(CUPS_HTTP_DEFAULT, &dests[i]);
+    if (info) {
+      color_capability =
+          cupsCheckDestSupported(CUPS_HTTP_DEFAULT, &dests[i], info,
+                                 CUPS_PRINT_COLOR_MODE,
+                                 CUPS_PRINT_COLOR_MODE_COLOR)
+              ? FLUTTER_PRINT_PLATFORM_INTERFACE_COLOR_CAPABILITY_SUPPORTED
+              : FLUTTER_PRINT_PLATFORM_INTERFACE_COLOR_CAPABILITY_MONOCHROME;
+      duplex_val = cupsCheckDestSupported(CUPS_HTTP_DEFAULT, &dests[i], info,
+                                          CUPS_SIDES,
+                                          CUPS_SIDES_TWO_SIDED_PORTRAIT);
       duplex_ptr = &duplex_val;
+      cupsFreeDestInfo(info);
     }
 
     // Build capabilities using the pigeon-generated constructor so the codec
