@@ -10,6 +10,7 @@
 * fix(linux): Fail with `UNSUPPORTED_FILE` when a WebP or HEIC image can't be converted, instead of sending it to CUPS.
 * fix(linux): Print on a worker thread, so the app doesn't freeze while a job is sent.
 * fix(linux): Fail `printPreview` with `FILE_NOT_FOUND` for a missing file.
+* fix(linux): Fix `listPrinters` never answering, and leaking a thread on each call.
 
 ## 0.5.0
 * feat: Add page range print option (Windows, macOS, Linux).

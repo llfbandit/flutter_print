@@ -319,22 +319,9 @@ static void handle_print_preview(
 // ListPrinters
 // ---------------------------------------------------------------------------
 
-typedef struct {
-  FlutterPrintFlutterPrintApiResponseHandle* response_handle;
-  FlValue* result_list;
-} ListPrintersReply;
-
-static gboolean list_printers_respond_idle(gpointer user_data) {
-  ListPrintersReply* reply = static_cast<ListPrintersReply*>(user_data);
-  flutter_print_flutter_print_api_respond_list_printers(reply->response_handle,
-                                                         reply->result_list);
-  fl_value_unref(reply->result_list);
-  g_free(reply);
-  return G_SOURCE_REMOVE;
-}
-
-static gpointer list_printers_worker(gpointer user_data) {
-  ListPrintersReply* reply = static_cast<ListPrintersReply*>(user_data);
+// Runs on a worker thread, since CUPS may query network printers.
+static void list_printers_thread(GTask* task, gpointer source_object,
+                                 gpointer task_data, GCancellable* cancellable) {
   FlValue* list = fl_value_new_list();
 
   cups_dest_t* dests = nullptr;
@@ -408,9 +395,18 @@ static gpointer list_printers_worker(gpointer user_data) {
 
   cupsFreeDests(num_dests, dests);
 
-  reply->result_list = list;
-  g_idle_add(list_printers_respond_idle, reply);
-  return nullptr;
+  g_task_return_pointer(task, list,
+                        reinterpret_cast<GDestroyNotify>(fl_value_unref));
+}
+
+// Runs on the main thread when the list is ready.
+static void list_printers_done(GObject* source_object, GAsyncResult* result,
+                               gpointer user_data) {
+  auto* response_handle = static_cast<FlutterPrintFlutterPrintApiResponseHandle*>(
+      g_task_get_task_data(G_TASK(result)));
+  g_autoptr(FlValue) list = static_cast<FlValue*>(
+      g_task_propagate_pointer(G_TASK(result), nullptr));
+  flutter_print_flutter_print_api_respond_list_printers(response_handle, list);
 }
 
 static void handle_pick_printer(
@@ -422,9 +418,11 @@ static void handle_pick_printer(
 static void handle_list_printers(
     FlutterPrintFlutterPrintApiResponseHandle* response_handle,
     gpointer user_data) {
-  ListPrintersReply* reply = g_new0(ListPrintersReply, 1);
-  reply->response_handle = response_handle;
-  g_thread_new("flutter_print_list_printers", list_printers_worker, reply);
+  // The caller frees the handle when this returns, so the task keeps a ref.
+  g_autoptr(GTask) task =
+      g_task_new(nullptr, nullptr, list_printers_done, nullptr);
+  g_task_set_task_data(task, g_object_ref(response_handle), g_object_unref);
+  g_task_run_in_thread(task, list_printers_thread);
 }
 
 // ---------------------------------------------------------------------------
