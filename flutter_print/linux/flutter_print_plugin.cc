@@ -2,12 +2,14 @@
 
 #include <flutter_linux/flutter_linux.h>
 #include <gtk/gtk.h>
+#include <gtk/gtkunixprint.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <glib/gstdio.h>
 #include <cstdlib>
 #include <cstring>
 #include <unistd.h>
 #include <cups/cups.h>
+#include <cups/ppd.h>
 #include <cups/pwg.h>
 
 #include "messages.h"
@@ -22,11 +24,20 @@
 
 struct _FlutterPrintPlugin {
   GObject parent_instance;
+  // Gives the Flutter view, to parent the print dialog.
+  FlPluginRegistrar* registrar;
 };
 
 G_DEFINE_TYPE(FlutterPrintPlugin, flutter_print_plugin, g_object_get_type())
 
-static void flutter_print_plugin_class_init(FlutterPrintPluginClass* klass) {}
+static void flutter_print_plugin_dispose(GObject* object) {
+  g_clear_object(&FLUTTER_PRINT_PLUGIN(object)->registrar);
+  G_OBJECT_CLASS(flutter_print_plugin_parent_class)->dispose(object);
+}
+
+static void flutter_print_plugin_class_init(FlutterPrintPluginClass* klass) {
+  G_OBJECT_CLASS(klass)->dispose = flutter_print_plugin_dispose;
+}
 
 static void flutter_print_plugin_init(FlutterPrintPlugin* self) {}
 
@@ -79,6 +90,16 @@ static const char* duplex_sides(FlutterPrintPrintOptions* options) {
       return "two-sided-short-edge";
   }
   return nullptr;
+}
+
+// The PWG media for the width and height of |page_size|, or nullptr when they
+// are unset. Prefer it to the name: names like "B4" or "DL" are ambiguous or
+// unknown to CUPS. pwgMediaForSize returns the standard size, or a custom one.
+static pwg_media_t* media_for_size(FlutterPrintPageSize* page_size) {
+  double* width  = flutter_print_page_size_get_width(page_size);
+  double* height = flutter_print_page_size_get_height(page_size);
+  if (!width || !height || *width <= 0 || *height <= 0) return nullptr;
+  return pwgMediaForSize((int)(*width * 100 + 0.5), (int)(*height * 100 + 0.5));
 }
 
 // Formats the pageRanges of |options| as a CUPS "page-ranges" value
@@ -220,14 +241,8 @@ static void print_file(PrintJob* job) {
   FlutterPrintPageSize* page_size =
       options ? flutter_print_print_options_get_page_size(options) : nullptr;
   if (page_size) {
-    // Prefer the size: names like "B4" or "DL" are ambiguous or unknown to
-    // CUPS. pwgMediaForSize returns the standard PWG name, or a custom size.
     const gchar* size_name = flutter_print_page_size_get_name(page_size);
-    double* width  = flutter_print_page_size_get_width(page_size);
-    double* height = flutter_print_page_size_get_height(page_size);
-    pwg_media_t* media = (width && height && *width > 0 && *height > 0)
-        ? pwgMediaForSize((int)(*width * 100 + 0.5), (int)(*height * 100 + 0.5))
-        : nullptr;
+    pwg_media_t* media = media_for_size(page_size);
     if (media) {
       num_options = cupsAddOption("media", media->pwg, num_options, &cups_opts);
     } else if (size_name && size_name[0] != '\0') {
@@ -289,30 +304,315 @@ static void handle_print(
   g_task_run_in_thread(task, print_thread);
 }
 
+// A print dialog request. Lives until the dialog is cancelled or the job is
+// sent.
+typedef struct {
+  gchar* file_path;
+  gchar* transcoded;  // Temp PNG of a WebP or HEIC file, or null.
+  int color;          // The caller's color option: 1, 0, or -1 when unset.
+  FlutterPrintFlutterPrintApiResponseHandle* response_handle;
+} PreviewRequest;
+
+static void preview_request_free(gpointer data) {
+  PreviewRequest* request = static_cast<PreviewRequest*>(data);
+  if (request->transcoded) g_remove(request->transcoded);
+  g_free(request->file_path);
+  g_free(request->transcoded);
+  g_object_unref(request->response_handle);
+  g_free(request);
+}
+
+static void preview_request_fail(PreviewRequest* request, const char* code,
+                                 const gchar* message) {
+  flutter_print_flutter_print_api_respond_error_print_preview(
+      request->response_handle, code, message, nullptr);
+  preview_request_free(request);
+}
+
+// The ColorModel choice of |printer| for |color|, or nullptr when its driver
+// has none. The dialog shows colour as this driver option, with names that
+// vary by driver ("Gray", "grayscale", "RGB"…). Free with g_free.
+static gchar* color_model_choice(const char* printer, bool color) {
+  // GTK reads the same PPD; libcups marks the PPD API deprecated.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  const char* file = cupsGetPPD2(CUPS_HTTP_DEFAULT, printer);
+  if (!file) return nullptr;
+  ppd_file_t* ppd = ppdOpenFile(file);
+  g_remove(file);
+  if (!ppd) return nullptr;
+
+  static const char* const kMono[] = {"gray", "grey", "mono", "black"};
+  static const char* const kColor[] = {"color", "colour", "rgb", "cmy"};
+  const char* const* words = color ? kColor : kMono;
+  gchar* result = nullptr;
+  ppd_option_t* option = ppdFindOption(ppd, "ColorModel");
+  for (int i = 0; option && !result && i < option->num_choices; i++) {
+    const ppd_choice_t& choice = option->choices[i];
+    g_autofree gchar* name = g_ascii_strdown(choice.choice, -1);
+    g_autofree gchar* text = g_ascii_strdown(choice.text, -1);
+    for (int w = 0; w < 4 && !result; w++) {
+      if (strstr(name, words[w]) || strstr(text, words[w])) {
+        result = g_strdup(choice.choice);
+      }
+    }
+  }
+  ppdClose(ppd);
+#pragma GCC diagnostic pop
+  return result;
+}
+
+// Pre-fills the dialog's |settings| and |page_setup| from |options|.
+static void apply_dialog_options(FlutterPrintPrintOptions* options,
+                                 GtkPrintSettings* settings,
+                                 GtkPageSetup* page_setup) {
+  if (!options) return;
+
+  const gchar* printer_address =
+      flutter_print_print_options_get_printer_address(options);
+  if (printer_address && printer_address[0] != '\0') {
+    gtk_print_settings_set_printer(settings, printer_address);
+  }
+
+  const int64_t* copies = flutter_print_print_options_get_copies(options);
+  if (copies && *copies > 0) gtk_print_settings_set_n_copies(settings, *copies);
+
+  const gboolean* landscape = flutter_print_print_options_get_landscape(options);
+  if (landscape) {
+    GtkPageOrientation orientation = *landscape
+        ? GTK_PAGE_ORIENTATION_LANDSCAPE : GTK_PAGE_ORIENTATION_PORTRAIT;
+    gtk_print_settings_set_orientation(settings, orientation);
+    gtk_page_setup_set_orientation(page_setup, orientation);
+  }
+
+  // Pre-select the colour choice of the initial printer's driver. GTK ignores
+  // the use-color setting. GTK selects the same default printer as CUPS.
+  const gboolean* color = flutter_print_print_options_get_color(options);
+  if (color) {
+    g_autofree gchar* printer = nullptr;
+    if (printer_address && printer_address[0] != '\0') {
+      printer = g_strdup(printer_address);
+    } else if (cups_dest_t* dest =
+                   cupsGetNamedDest(CUPS_HTTP_DEFAULT, nullptr, nullptr)) {
+      printer = g_strdup(dest->name);
+      cupsFreeDests(1, dest);
+    }
+    g_autofree gchar* choice =
+        printer ? color_model_choice(printer, *color) : nullptr;
+    if (choice) gtk_print_settings_set(settings, "cups-ColorModel", choice);
+  }
+
+  // GTK's horizontal duplex is CUPS' long edge (DuplexNoTumble).
+  FlutterPrintDuplexMode* duplex =
+      flutter_print_print_options_get_duplex_mode(options);
+  if (duplex) {
+    switch (*duplex) {
+      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_NONE:
+        gtk_print_settings_set_duplex(settings, GTK_PRINT_DUPLEX_SIMPLEX);
+        break;
+      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_LONG_EDGE:
+        gtk_print_settings_set_duplex(settings, GTK_PRINT_DUPLEX_HORIZONTAL);
+        break;
+      case FLUTTER_PRINT_PLATFORM_INTERFACE_DUPLEX_MODE_SHORT_EDGE:
+        gtk_print_settings_set_duplex(settings, GTK_PRINT_DUPLEX_VERTICAL);
+        break;
+    }
+  }
+
+  // GTK page ranges start at 0.
+  FlValue* ranges = flutter_print_print_options_get_page_ranges(options);
+  if (ranges && fl_value_get_type(ranges) == FL_VALUE_TYPE_LIST &&
+      fl_value_get_length(ranges) > 0) {
+    size_t count = fl_value_get_length(ranges);
+    g_autofree GtkPageRange* gtk_ranges = g_new0(GtkPageRange, count);
+    for (size_t i = 0; i < count; i++) {
+      auto* range = FLUTTER_PRINT_PAGE_RANGE(
+          fl_value_get_custom_value_object(fl_value_get_list_value(ranges, i)));
+      gtk_ranges[i].start = flutter_print_page_range_get_start(range) - 1;
+      gtk_ranges[i].end = flutter_print_page_range_get_end(range) - 1;
+    }
+    gtk_print_settings_set_print_pages(settings, GTK_PRINT_PAGES_RANGES);
+    gtk_print_settings_set_page_ranges(settings, gtk_ranges, count);
+  }
+
+  // Select the paper by its size, or else by its name ("A4", "Letter"…).
+  FlutterPrintPageSize* page_size =
+      flutter_print_print_options_get_page_size(options);
+  if (page_size) {
+    pwg_media_t* media = media_for_size(page_size);
+    const gchar* name = flutter_print_page_size_get_name(page_size);
+    if (!media && name && name[0] != '\0') {
+      media = pwgMediaForPPD(name);
+      if (!media) media = pwgMediaForLegacy(name);
+    }
+    if (media) {
+      // PWG sizes are in hundredths of a millimetre; GTK wants points.
+      GtkPaperSize* paper = gtk_paper_size_new_from_ipp(
+          media->pwg, media->width * 72.0 / 2540.0,
+          media->length * 72.0 / 2540.0);
+      gtk_page_setup_set_paper_size(page_setup, paper);
+      gtk_print_settings_set_paper_size(settings, paper);
+      gtk_paper_size_free(paper);
+    }
+  }
+}
+
+// Adds what GTK leaves to the app when it prints a file as is, as CUPS
+// options: GTK forwards "cups-" settings to CUPS.
+static void add_job_options(GtkPrintSettings* settings,
+                            GtkPageSetup* page_setup, int color) {
+  // GTK page ranges start at 0.
+  if (gtk_print_settings_get_print_pages(settings) == GTK_PRINT_PAGES_RANGES) {
+    gint count = 0;
+    g_autofree GtkPageRange* ranges =
+        gtk_print_settings_get_page_ranges(settings, &count);
+    GString* value = g_string_new(nullptr);
+    for (gint i = 0; i < count; i++) {
+      if (value->len > 0) g_string_append_c(value, ',');
+      g_string_append_printf(value, "%d-%d", ranges[i].start + 1,
+                             ranges[i].end + 1);
+    }
+    if (value->len > 0) {
+      gtk_print_settings_set(settings, "cups-page-ranges", value->str);
+    }
+    g_string_free(value, TRUE);
+  }
+
+  // IPP orientation-requested: 3 portrait, 4 landscape, 5 reverse landscape,
+  // 6 reverse portrait.
+  const char* orientation = "3";
+  switch (gtk_page_setup_get_orientation(page_setup)) {
+    case GTK_PAGE_ORIENTATION_PORTRAIT: orientation = "3"; break;
+    case GTK_PAGE_ORIENTATION_LANDSCAPE: orientation = "4"; break;
+    case GTK_PAGE_ORIENTATION_REVERSE_LANDSCAPE: orientation = "5"; break;
+    case GTK_PAGE_ORIENTATION_REVERSE_PORTRAIT: orientation = "6"; break;
+  }
+  gtk_print_settings_set(settings, "cups-orientation-requested", orientation);
+
+  // Without a ColorModel option the dialog has no colour choice: send the
+  // caller's.
+  if (color >= 0 && !gtk_print_settings_has_key(settings, "cups-ColorModel")) {
+    gtk_print_settings_set(settings, "cups-print-color-mode",
+                           color ? "color" : "monochrome");
+  }
+}
+
+static void preview_job_sent(GtkPrintJob* job, gpointer user_data,
+                             const GError* error) {
+  PreviewRequest* request = static_cast<PreviewRequest*>(user_data);
+  if (error) {
+    flutter_print_flutter_print_api_respond_error_print_preview(
+        request->response_handle, "PRINT_ERROR", error->message, nullptr);
+  } else {
+    flutter_print_flutter_print_api_respond_print_preview(
+        request->response_handle);
+  }
+}
+
+static void preview_dialog_response(GtkDialog* dialog, gint response,
+                                    gpointer user_data) {
+  PreviewRequest* request = static_cast<PreviewRequest*>(user_data);
+
+  // Preview: show the file in the default viewer and keep the dialog open.
+  if (response == GTK_RESPONSE_APPLY) {
+    g_autoptr(GError) err = nullptr;
+    g_autofree gchar* uri = g_filename_to_uri(request->file_path, nullptr, &err);
+    if (!uri || !gtk_show_uri_on_window(GTK_WINDOW(dialog), uri,
+                                        GDK_CURRENT_TIME, &err)) {
+      g_warning("flutter_print: cannot open %s: %s", request->file_path,
+                err ? err->message : "(unknown)");
+    }
+    return;
+  }
+
+  // Report a cancel as success, like on macOS and iOS.
+  if (response != GTK_RESPONSE_OK) {
+    flutter_print_flutter_print_api_respond_print_preview(
+        request->response_handle);
+    preview_request_free(request);
+    gtk_widget_destroy(GTK_WIDGET(dialog));
+    return;
+  }
+
+  GtkPrintUnixDialog* print_dialog = GTK_PRINT_UNIX_DIALOG(dialog);
+  g_autoptr(GtkPrintSettings) settings =
+      gtk_print_unix_dialog_get_settings(print_dialog);
+  GtkPageSetup* page_setup = gtk_print_unix_dialog_get_page_setup(print_dialog);
+  add_job_options(settings, page_setup, request->color);
+  g_autoptr(GtkPrintJob) job = gtk_print_job_new(
+      "Flutter Print Job", gtk_print_unix_dialog_get_selected_printer(print_dialog),
+      settings, page_setup);
+  gtk_widget_destroy(GTK_WIDGET(dialog));
+
+  g_autoptr(GError) err = nullptr;
+  const gchar* print_path =
+      request->transcoded ? request->transcoded : request->file_path;
+  if (!gtk_print_job_set_source_file(job, print_path, &err)) {
+    preview_request_fail(request, "PRINT_ERROR", err->message);
+    return;
+  }
+  // The job keeps a ref while sending, and frees the request when done.
+  gtk_print_job_send(job, preview_job_sent, request, preview_request_free);
+}
+
 static void handle_print_preview(
     const gchar* file_path,
     FlutterPrintPrintOptions* options,
     FlutterPrintFlutterPrintApiResponseHandle* response_handle,
     gpointer user_data) {
+  FlutterPrintPlugin* plugin = FLUTTER_PRINT_PLUGIN(user_data);
+
+  PreviewRequest* request = g_new0(PreviewRequest, 1);
+  request->file_path = g_strdup(file_path);
+  const gboolean* color =
+      options ? flutter_print_print_options_get_color(options) : nullptr;
+  request->color = color ? *color : -1;
+  // The caller frees the handle when this returns, so the request keeps a ref.
+  request->response_handle =
+      FLUTTER_PRINT_FLUTTER_PRINT_API_RESPONSE_HANDLE(g_object_ref(response_handle));
+
   if (!g_file_test(file_path, G_FILE_TEST_EXISTS)) {
     g_autofree gchar* msg = g_strdup_printf("File not found: %s", file_path);
-    flutter_print_flutter_print_api_respond_error_print_preview(
-        response_handle, "FILE_NOT_FOUND", msg, nullptr);
+    preview_request_fail(request, "FILE_NOT_FOUND", msg);
     return;
   }
 
-  g_autoptr(GError) err = nullptr;
-  g_autoptr(GSubprocess) proc =
-      g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &err, "xdg-open", file_path, nullptr);
-  if (!proc) {
-    g_autofree gchar* msg =
-        g_strdup_printf("xdg-open failed: %s", err ? err->message : "(unknown)");
-    g_warning("%s", msg);
-    flutter_print_flutter_print_api_respond_error_print_preview(
-        response_handle, "PREVIEW_ERROR", msg, nullptr);
-    return;
+  // CUPS cannot print WebP or HEIC: convert them to PNG, as for print.
+  if (needs_transcode(file_path)) {
+    g_autoptr(GError) err = nullptr;
+    request->transcoded = transcode_to_png(file_path, &err);
+    if (!request->transcoded) {
+      bool unsupported =
+          g_error_matches(err, GDK_PIXBUF_ERROR, GDK_PIXBUF_ERROR_UNKNOWN_TYPE);
+      g_autofree gchar* msg =
+          g_strdup_printf("Cannot convert %s: %s", file_path, err->message);
+      preview_request_fail(request,
+                           unsupported ? "UNSUPPORTED_FILE" : "PRINT_ERROR", msg);
+      return;
+    }
   }
-  flutter_print_flutter_print_api_respond_print_preview(response_handle);
+
+  FlView* view = fl_plugin_registrar_get_view(plugin->registrar);
+  GtkWindow* parent =
+      view ? GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(view))) : nullptr;
+  GtkWidget* dialog = gtk_print_unix_dialog_new(nullptr, parent);
+  GtkPrintUnixDialog* print_dialog = GTK_PRINT_UNIX_DIALOG(dialog);
+
+  g_autoptr(GtkPrintSettings) settings = gtk_print_settings_new();
+  g_autoptr(GtkPageSetup) page_setup = gtk_page_setup_new();
+  apply_dialog_options(options, settings, page_setup);
+  gtk_print_unix_dialog_set_settings(print_dialog, settings);
+  gtk_print_unix_dialog_set_page_setup(print_dialog, page_setup);
+  // Show paper and orientation in the dialog. CUPS applies the other options,
+  // so only Preview is handled here.
+  gtk_print_unix_dialog_set_embed_page_setup(print_dialog, TRUE);
+  gtk_print_unix_dialog_set_manual_capabilities(print_dialog,
+                                                GTK_PRINT_CAPABILITY_PREVIEW);
+
+  gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+  g_signal_connect(dialog, "response", G_CALLBACK(preview_dialog_response),
+                   request);
+  gtk_widget_show(dialog);
 }
 
 // ---------------------------------------------------------------------------
@@ -440,6 +740,7 @@ void flutter_print_plugin_register_with_registrar(
     FlPluginRegistrar* registrar) {
   FlutterPrintPlugin* plugin = FLUTTER_PRINT_PLUGIN(
       g_object_new(flutter_print_plugin_get_type(), nullptr));
+  plugin->registrar = FL_PLUGIN_REGISTRAR(g_object_ref(registrar));
 
   FlBinaryMessenger* messenger = fl_plugin_registrar_get_messenger(registrar);
   flutter_print_flutter_print_api_set_method_handlers(

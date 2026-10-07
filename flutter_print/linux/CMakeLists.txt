@@ -42,6 +42,10 @@ target_include_directories(${PLUGIN_NAME} INTERFACE
 target_link_libraries(${PLUGIN_NAME} PRIVATE flutter)
 target_link_libraries(${PLUGIN_NAME} PRIVATE PkgConfig::GTK)
 
+# GTK's print dialog has its own header directory.
+pkg_check_modules(GTK_UNIX_PRINT REQUIRED IMPORTED_TARGET gtk+-unix-print-3.0)
+target_link_libraries(${PLUGIN_NAME} PRIVATE PkgConfig::GTK_UNIX_PRINT)
+
 # CUPS is the standard Linux/Unix printing subsystem.
 # FindCups avoids pkg-config: some distros' cups.pc requires -dev packages
 # that libcups2-dev doesn't install.

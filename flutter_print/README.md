@@ -106,7 +106,8 @@ Image.memory(png);
 ¹ With a `printerAddress` from `FlutterPrint.ios?.pickPrinter()` (e.g.
 `ipp://printer.local./ipp/print`). Without it, the system print dialog is shown.  
 ² A Flutter print dialog with a built-in preview.  
-³ Opens the file in its default viewer with `xdg-open`.
+³ The GTK print dialog, pre-filled with the options. Its Preview button opens
+the file in the default viewer.
 
 ## Option support by platform
 

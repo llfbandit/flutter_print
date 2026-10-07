@@ -740,8 +740,8 @@ protocol FlutterPrintApi {
   /// printer. Other file types are delegated; the
   /// associated application handles rendering and most options are ignored.
   ///
-  /// **Linux** — submits the job via CUPS (`cupsPrintFile`). Falls back to
-  /// the `lp` command-line tool when CUPS is not available at build time.
+  /// **Linux** — submits the job via CUPS (`cupsPrintFile`), which converts
+  /// PDF, image and text files.
   ///
   /// Throws a [PlatformException] if the file is not found, the file type is
   /// unsupported, or the print subsystem reports an error.
@@ -758,8 +758,8 @@ protocol FlutterPrintApi {
   /// **Windows** — opens a custom Flutter print dialog with a built-in
   /// preview for PDF, image, and text files.
   ///
-  /// **Linux** — opens the file with `xdg-open`, delegating preview and
-  /// printing to the default document viewer.
+  /// **Linux** — opens the GTK print dialog, pre-filled with the options. Its
+  /// Preview button opens the file in the default viewer.
   ///
   /// Throws a [PlatformException] if the file is not found.
   func printPreview(filePath: String, options: PrintOptions?, completion: @escaping (Result<Void, Error>) -> Void)
@@ -800,8 +800,8 @@ class FlutterPrintApiSetup {
     /// printer. Other file types are delegated; the
     /// associated application handles rendering and most options are ignored.
     ///
-    /// **Linux** — submits the job via CUPS (`cupsPrintFile`). Falls back to
-    /// the `lp` command-line tool when CUPS is not available at build time.
+    /// **Linux** — submits the job via CUPS (`cupsPrintFile`), which converts
+    /// PDF, image and text files.
     ///
     /// Throws a [PlatformException] if the file is not found, the file type is
     /// unsupported, or the print subsystem reports an error.
@@ -835,8 +835,8 @@ class FlutterPrintApiSetup {
     /// **Windows** — opens a custom Flutter print dialog with a built-in
     /// preview for PDF, image, and text files.
     ///
-    /// **Linux** — opens the file with `xdg-open`, delegating preview and
-    /// printing to the default document viewer.
+    /// **Linux** — opens the GTK print dialog, pre-filled with the options. Its
+    /// Preview button opens the file in the default viewer.
     ///
     /// Throws a [PlatformException] if the file is not found.
     let printPreviewChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.flutter_print_platform_interface.FlutterPrintApi.printPreview\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
