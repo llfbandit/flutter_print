@@ -14,6 +14,11 @@ set(PLUGIN_NAME "flutter_print_plugin")
 # Any new source files that you add to the plugin should be added here.
 list(APPEND PLUGIN_SOURCES
   "flutter_print_plugin.cc"
+  "cups_options.cc"
+  "print_dialog.cc"
+  "print_file.cc"
+  "print_job.cc"
+  "printer_list.cc"
   "messages.cc"
 )
 
@@ -42,13 +47,12 @@ target_include_directories(${PLUGIN_NAME} INTERFACE
 target_link_libraries(${PLUGIN_NAME} PRIVATE flutter)
 target_link_libraries(${PLUGIN_NAME} PRIVATE PkgConfig::GTK)
 
-# GTK's print dialog has its own header directory.
+# The GTK print dialog headers are in their own directory.
 pkg_check_modules(GTK_UNIX_PRINT REQUIRED IMPORTED_TARGET gtk+-unix-print-3.0)
 target_link_libraries(${PLUGIN_NAME} PRIVATE PkgConfig::GTK_UNIX_PRINT)
 
-# CUPS is the standard Linux/Unix printing subsystem.
-# FindCups avoids pkg-config: some distros' cups.pc requires -dev packages
-# that libcups2-dev doesn't install.
+# CUPS prints on Linux. FindCups doesn't use pkg-config, because on some
+# distros cups.pc needs -dev packages that libcups2-dev doesn't install.
 find_package(Cups REQUIRED)
 target_include_directories(${PLUGIN_NAME} PRIVATE ${CUPS_INCLUDE_DIR})
 target_link_libraries(${PLUGIN_NAME} PRIVATE ${CUPS_LIBRARIES})
