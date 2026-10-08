@@ -18,6 +18,8 @@ list(APPEND PLUGIN_SOURCES
   "print_dialog.cc"
   "print_file.cc"
   "print_job.cc"
+  "print_portal.cc"
+  "print_settings.cc"
   "printer_list.cc"
   "messages.cc"
 )

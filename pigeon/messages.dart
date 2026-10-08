@@ -323,7 +323,9 @@ abstract class FlutterPrintApi {
   /// preview for PDF, image, and text files.
   ///
   /// **Linux** — opens the GTK print dialog, pre-filled with the options. Its
-  /// Preview button opens the file in the default viewer.
+  /// Preview button opens the file in the default viewer. In a Flatpak or
+  /// Snap sandbox, or with `GTK_USE_PORTAL=1`, opens the desktop print dialog
+  /// through the print portal instead.
   ///
   /// Throws a [PlatformException] if the file is not found.
   @async

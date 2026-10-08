@@ -214,3 +214,9 @@ sudo pacman -S cups
 
 Without them the build fails. At runtime, the CUPS service must be running to
 list printers and print.
+
+In a Flatpak or Snap sandbox, `printPreview` shows the desktop print dialog
+through the print portal (`xdg-desktop-portal`). Set `GTK_USE_PORTAL=1` to use
+the portal outside a sandbox too. With the GNOME portal, page ranges and
+orientation may be ignored. `print` and `listPrinters` still need CUPS: give
+the app access to it (`--socket=cups` for Flatpak, the `cups` plug for Snap).

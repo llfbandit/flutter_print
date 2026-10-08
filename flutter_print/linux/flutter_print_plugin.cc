@@ -4,6 +4,7 @@
 
 #include "print_dialog.h"
 #include "print_job.h"
+#include "print_portal.h"
 #include "printer_list.h"
 
 #define FLUTTER_PRINT_PLUGIN(obj) \
@@ -46,7 +47,11 @@ static void handle_print_preview(
   FlView* view = fl_plugin_registrar_get_view(plugin->registrar);
   GtkWindow* parent =
       view ? GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(view))) : nullptr;
-  print_dialog_show(parent, file_path, options, response_handle);
+  if (print_portal_should_use()) {
+    print_portal_show(parent, file_path, options, response_handle);
+  } else {
+    print_dialog_show(parent, file_path, options, response_handle);
+  }
 }
 
 static void handle_list_printers(
