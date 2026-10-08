@@ -62,20 +62,20 @@ class FlutterPrint {
     double dpi = 300,
     PageSize? contentSize,
   }) async {
-    options = _normalize(options);
+    final normalized = _normalize(options);
     final bytes = await renderWidgetToPdf(
       builder: builder,
       context: context,
       dpi: dpi,
-      pageSize: options?.pageSize,
+      pageSize: normalized.pageSize,
       contentSize: contentSize,
-      margins: options?.margins,
+      margins: normalized.margins,
     );
 
     if (!context.mounted) return;
 
     final path = await bytesToPath(bytes);
-    await FlutterPrintPlatform.instance.print(path, options: options);
+    await FlutterPrintPlatform.instance.print(path, options: normalized);
   }
 
   /// Renders the widget returned by [builder] off-screen and opens the
@@ -94,14 +94,14 @@ class FlutterPrint {
     double dpi = 300,
     PageSize? contentSize,
   }) async {
-    options = _normalize(options);
+    final normalized = _normalize(options);
     final bytes = await renderWidgetToPdf(
       builder: builder,
       context: context,
       dpi: dpi,
-      pageSize: options?.pageSize,
+      pageSize: normalized.pageSize,
       contentSize: contentSize,
-      margins: options?.margins,
+      margins: normalized.margins,
     );
 
     if (!context.mounted) return;
@@ -110,7 +110,7 @@ class FlutterPrint {
 
     await FlutterPrintPlatform.instance.printPreview(
       path,
-      options: options,
+      options: normalized,
       context: context,
     );
   }
@@ -153,10 +153,12 @@ class FlutterPrint {
     return FlutterPrintPlatform.instance.listPrinters();
   }
 
-  // copyWith keeps the caller's options untouched.
-  static PrintOptions? _normalize(PrintOptions? options) {
-    final ranges = options?.pageRanges;
-    if (options == null || ranges == null || ranges.isEmpty) return options;
+  // Send empty options rather than null: the generated Linux code logs a
+  // warning for null. copyWith keeps the caller's options untouched.
+  static PrintOptions _normalize(PrintOptions? options) {
+    if (options == null) return PrintOptions();
+    final ranges = options.pageRanges;
+    if (ranges == null || ranges.isEmpty) return options;
     return options.copyWith(pageRanges: normalizePageRanges(ranges));
   }
 
