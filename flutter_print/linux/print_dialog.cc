@@ -55,7 +55,8 @@ static void send_job(GtkPrintUnixDialog* dialog, DialogRequest* request) {
   g_autoptr(GtkPrintSettings) settings =
       gtk_print_unix_dialog_get_settings(dialog);
   GtkPageSetup* page_setup = gtk_print_unix_dialog_get_page_setup(dialog);
-  print_settings_add_job_options(settings, page_setup, request->color);
+  print_settings_add_job_options(settings, page_setup, request->color,
+                                 print_file_is_image(request->file));
   g_autoptr(GtkPrintJob) job = gtk_print_job_new(
       "Flutter Print Job", gtk_print_unix_dialog_get_selected_printer(dialog),
       settings, page_setup);

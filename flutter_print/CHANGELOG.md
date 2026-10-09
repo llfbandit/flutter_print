@@ -14,6 +14,8 @@
 * feat(linux): Open the GTK print dialog in `printPreview`, pre-filled with the options, instead of the default viewer.
 * feat(linux): Use the print portal in `printPreview` in Flatpak and Snap sandboxes.
 * fix(linux): Stop the warning logged when `print` gets no options.
+* fix(linux): Print images as PDF, so orientation works on every printer and GIF and BMP print.
+* fix(linux): Print text at 10 pt, like on Windows.
 
 ## 0.5.0
 * feat: Add page range print option (Windows, macOS, Linux).

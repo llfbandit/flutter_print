@@ -28,15 +28,24 @@ static void print_job_fail(PrintJob* job, const char* code, gchar* message) {
   job->error_message = message;
 }
 
-// Builds the CUPS options for |options|, on top of the |dest| printer's
-// saved options. Returns the number of options.
-static int build_options(FlutterPrintPrintOptions* options, cups_dest_t* dest,
+// Builds the CUPS options for |file| and |options|, on top of the |dest|
+// printer's saved options. Returns the number of options.
+static int build_options(const PrintFile* file,
+                         FlutterPrintPrintOptions* options, cups_dest_t* dest,
                          cups_option_t** cups_opts) {
   int num_options = 0;
   for (int i = 0; i < dest->num_options; i++) {
     num_options = cupsAddOption(dest->options[i].name, dest->options[i].value,
                                 num_options, cups_opts);
   }
+
+  // Fit images to the page. Print text at 10 pt, like on Windows: 12
+  // characters and 7 lines per inch. Other files ignore cpi and lpi.
+  if (print_file_is_image(file)) {
+    num_options = cupsAddOption("print-scaling", "fit", num_options, cups_opts);
+  }
+  num_options = cupsAddOption("cpi", "12", num_options, cups_opts);
+  num_options = cupsAddOption("lpi", "7", num_options, cups_opts);
   if (!options) return num_options;
 
   const int64_t* copies = flutter_print_print_options_get_copies(options);
@@ -114,7 +123,7 @@ static void print_job_run(PrintJob* job) {
   }
 
   cups_option_t* cups_opts = nullptr;
-  int num_options = build_options(job->options, dest, &cups_opts);
+  int num_options = build_options(file, job->options, dest, &cups_opts);
   int job_id = cupsPrintFile(dest->name, print_file_path(file),
                              "Flutter Print Job", num_options, cups_opts);
   cupsFreeOptions(num_options, cups_opts);

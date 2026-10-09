@@ -92,7 +92,8 @@ void print_settings_fill(FlutterPrintPrintOptions* options,
 }
 
 void print_settings_add_job_options(GtkPrintSettings* settings,
-                                    GtkPageSetup* page_setup, int color) {
+                                    GtkPageSetup* page_setup, int color,
+                                    bool image) {
   // GTK counts pages from 0. CUPS counts from 1.
   if (gtk_print_settings_get_print_pages(settings) == GTK_PRINT_PAGES_RANGES) {
     gint count = 0;
@@ -127,4 +128,9 @@ void print_settings_add_job_options(GtkPrintSettings* settings,
     gtk_print_settings_set(settings, "cups-print-color-mode",
                            color ? "color" : "monochrome");
   }
+
+  // Same as in print_job.cc.
+  if (image) gtk_print_settings_set(settings, "cups-print-scaling", "fit");
+  gtk_print_settings_set(settings, "cups-cpi", "12");
+  gtk_print_settings_set(settings, "cups-lpi", "7");
 }

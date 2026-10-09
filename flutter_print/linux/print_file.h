@@ -3,8 +3,7 @@
 
 #include <glib.h>
 
-// A file ready for CUPS. CUPS can't print WebP or HEIC images, so they become
-// a temp PNG.
+// A file ready for CUPS. Images become a temp PDF.
 typedef struct PrintFile PrintFile;
 
 // Checks that |path| exists and converts it when needed. On error, returns
@@ -15,7 +14,11 @@ PrintFile* print_file_prepare(const char* path, const char** error_code,
 // Returns the path to send to CUPS.
 const char* print_file_path(const PrintFile* file);
 
-// Deletes the temp PNG and frees |file|.
+// Returns true when the file is an image. Send it with print-scaling=fit, so
+// it fills the page.
+bool print_file_is_image(const PrintFile* file);
+
+// Deletes the temp PDF and frees |file|.
 void print_file_free(PrintFile* file);
 
 #endif  // FLUTTER_PRINT_PRINT_FILE_H_
