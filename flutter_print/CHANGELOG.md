@@ -16,6 +16,7 @@
 * fix(linux): Stop the warning logged when `print` gets no options.
 * fix(linux): Print images as PDF, so orientation works on every printer and GIF and BMP print.
 * fix(linux): Print text at 10 pt, like on Windows.
+* fix(windows, linux): Print images at their real size. Shrink only the images larger than the page.
 
 ## 0.5.0
 * feat: Add page range print option (Windows, macOS, Linux).

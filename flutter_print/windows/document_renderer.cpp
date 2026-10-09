@@ -197,6 +197,11 @@ static std::unique_ptr<Gdiplus::Bitmap> DecodePage(const WicImage& img,
   if (FAILED(img.decoder->GetFrame(index, &frame)) ||
       FAILED(frame->GetSize(&w, &h)) || w == 0 || h == 0)
     return nullptr;
+  const UINT fullW = w, fullH = h;
+  // The DPI gives the real size. Use 96 when the file has none.
+  double dpiX = 0, dpiY = 0;
+  if (FAILED(frame->GetResolution(&dpiX, &dpiY)) || dpiX <= 0 || dpiY <= 0)
+    dpiX = dpiY = 96;
 
   ComPtr<IWICBitmapSource> source = frame;
   if (maxSide > 0 && std::max(w, h) > maxSide) {
@@ -233,7 +238,18 @@ static std::unique_ptr<Gdiplus::Bitmap> DecodePage(const WicImage& img,
   bmp->UnlockBits(&data);
   if (FAILED(hr)) return nullptr;
 
-  bmp->RotateFlip(UprightTransform(ReadOrientation(frame.Get())));
+  const Gdiplus::RotateFlipType upright =
+      UprightTransform(ReadOrientation(frame.Get()));
+  bmp->RotateFlip(upright);
+  // Keep the real size: a smaller decode has a lower DPI, and a turn swaps
+  // the sides.
+  const double outX = dpiX * w / fullW, outY = dpiY * h / fullH;
+  const bool turned = upright == Gdiplus::Rotate90FlipNone ||
+                      upright == Gdiplus::Rotate270FlipNone ||
+                      upright == Gdiplus::Rotate90FlipX ||
+                      upright == Gdiplus::Rotate270FlipX;
+  bmp->SetResolution(static_cast<Gdiplus::REAL>(turned ? outY : outX),
+                     static_cast<Gdiplus::REAL>(turned ? outX : outY));
   return bmp;
 }
 
@@ -541,12 +557,16 @@ static PageTarget PrinterTarget(HDC hdc) {
   return t;
 }
 
-// Draws |img| fitted and centered in the printable area.
+// Draws |img| centered in the printable area, at its real size (pixels and
+// DPI). Shrinks it when it is larger than the area, but never enlarges it.
 static void DrawFitted(const PageTarget& t, Gdiplus::Image* img) {
   const UINT iw = img->GetWidth(), ih = img->GetHeight();
   if (iw == 0 || ih == 0) return;
-  const double s = std::min(static_cast<double>(t.resW) / iw,
-                            static_cast<double>(t.resH) / ih);
+  double s = std::min(static_cast<double>(t.resW) / iw,
+                      static_cast<double>(t.resH) / ih);
+  const double rx = img->GetHorizontalResolution();
+  const double ry = img->GetVerticalResolution();
+  if (rx > 0 && ry > 0) s = std::min({s, t.dpiX / rx, t.dpiY / ry});
   const double dw = iw * s, dh = ih * s;
   Gdiplus::Graphics g(t.hdc);
   g.SetPageUnit(Gdiplus::UnitPixel);

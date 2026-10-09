@@ -130,7 +130,9 @@ void print_settings_add_job_options(GtkPrintSettings* settings,
   }
 
   // Same as in print_job.cc.
-  if (image) gtk_print_settings_set(settings, "cups-print-scaling", "fit");
+  if (image) {
+    gtk_print_settings_set(settings, "cups-print-scaling", "auto-fit");
+  }
   gtk_print_settings_set(settings, "cups-cpi", "12");
   gtk_print_settings_set(settings, "cups-lpi", "7");
 }

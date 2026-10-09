@@ -24,15 +24,28 @@ static gchar* content_type(const char* path) {
   return g_content_type_guess(path, data, size, nullptr);
 }
 
-// Draws the image at |path| on a one-page PDF of the same size, upright
-// from its EXIF data. Returns the PDF path, or null and sets |error|.
-// GDK_PIXBUF_ERROR_UNKNOWN_TYPE means no loader for the format is installed.
+// Returns the DPI of |pixbuf|, from the file, or 96 when the file has none,
+// like on Windows.
+static double image_dpi(GdkPixbuf* pixbuf, const char* key) {
+  const gchar* value = gdk_pixbuf_get_option(pixbuf, key);
+  double dpi = value ? g_ascii_strtod(value, nullptr) : 0;
+  return dpi > 0 ? dpi : 96;
+}
+
+// Draws the image at |path| on a one-page PDF of its real size (pixels and
+// DPI), upright from its EXIF data. Returns the PDF path, or null and sets
+// |error|. GDK_PIXBUF_ERROR_UNKNOWN_TYPE means no loader for the format is
+// installed.
 static gchar* convert_to_pdf(const char* path, bool jpeg, GError** error) {
   g_autoptr(GdkPixbuf) loaded = gdk_pixbuf_new_from_file(path, error);
   if (!loaded) return nullptr;
   g_autoptr(GdkPixbuf) pixbuf = gdk_pixbuf_apply_embedded_orientation(loaded);
   int width = gdk_pixbuf_get_width(pixbuf);
   int height = gdk_pixbuf_get_height(pixbuf);
+  // A turn by EXIF swaps the sides, and so the DPI.
+  bool turned = width != gdk_pixbuf_get_width(loaded);
+  double scale_x = 72 / image_dpi(loaded, turned ? "y-dpi" : "x-dpi");
+  double scale_y = 72 / image_dpi(loaded, turned ? "x-dpi" : "y-dpi");
 
   // g_file_open_tmp creates a new file with a random name, so another user
   // can't plant a symlink at the path.
@@ -41,8 +54,9 @@ static gchar* convert_to_pdf(const char* path, bool jpeg, GError** error) {
   if (fd < 0) return nullptr;
   close(fd);
 
-  // One pixel is one point. CUPS scales the page to the paper.
-  cairo_surface_t* surface = cairo_pdf_surface_create(pdf, width, height);
+  // PDF sizes are in points (1/72 inch).
+  cairo_surface_t* surface =
+      cairo_pdf_surface_create(pdf, width * scale_x, height * scale_y);
   cairo_surface_t* image =
       gdk_cairo_surface_create_from_pixbuf(pixbuf, 1, nullptr);
   // Keep a JPEG as JPEG in the PDF, unless EXIF turned it.
@@ -55,6 +69,7 @@ static gchar* convert_to_pdf(const char* path, bool jpeg, GError** error) {
                                 g_free, data);
   }
   cairo_t* cr = cairo_create(surface);
+  cairo_scale(cr, scale_x, scale_y);
   cairo_set_source_surface(cr, image, 0, 0);
   cairo_paint(cr);
   cairo_destroy(cr);

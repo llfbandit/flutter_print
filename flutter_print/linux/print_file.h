@@ -14,8 +14,8 @@ PrintFile* print_file_prepare(const char* path, const char** error_code,
 // Returns the path to send to CUPS.
 const char* print_file_path(const PrintFile* file);
 
-// Returns true when the file is an image. Send it with print-scaling=fit, so
-// it fills the page.
+// Returns true when the file is an image. Send it with print-scaling=auto-fit,
+// so CUPS shrinks it when it is larger than the page.
 bool print_file_is_image(const PrintFile* file);
 
 // Deletes the temp PDF and frees |file|.

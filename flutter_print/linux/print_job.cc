@@ -39,10 +39,12 @@ static int build_options(const PrintFile* file,
                                 num_options, cups_opts);
   }
 
-  // Fit images to the page. Print text at 10 pt, like on Windows: 12
-  // characters and 7 lines per inch. Other files ignore cpi and lpi.
+  // Shrink images larger than the page, but never enlarge them. Print text
+  // at 10 pt, like on Windows: 12 characters and 7 lines per inch. Other
+  // files ignore cpi and lpi.
   if (print_file_is_image(file)) {
-    num_options = cupsAddOption("print-scaling", "fit", num_options, cups_opts);
+    num_options =
+        cupsAddOption("print-scaling", "auto-fit", num_options, cups_opts);
   }
   num_options = cupsAddOption("cpi", "12", num_options, cups_opts);
   num_options = cupsAddOption("lpi", "7", num_options, cups_opts);
