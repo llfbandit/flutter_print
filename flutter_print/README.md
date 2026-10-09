@@ -137,7 +137,7 @@ from the requested settings.
 
 | Platform | PDF & images | Text documents | Other files |
 |----------|--------------|----------------|-------------|
-| Android  | Native       | Not supported  | Not supported |
+| Android  | Native       | `UNSUPPORTED_FILE` | `UNSUPPORTED_FILE` |
 | iOS      | Native       | `UNSUPPORTED_FILE` | `UNSUPPORTED_FILE` |
 | macOS    | Native       | Native¹        | `print` fails with `UNSUPPORTED_FILE`; `printPreview` opens the default app |
 | Windows  | Native²      | Native³        | Printed by the associated application, with its own settings⁴ |
@@ -158,15 +158,16 @@ from the requested settings.
 | PNG    | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    |
 | BMP    | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    |
 | GIF    | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    |
-| TIFF   | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    |
+| TIFF   |         | ✔️  | ✔️    | ✔️      | ✔️    |
 | WebP   | ✔️      | ✔️¹ | ✔️¹   | ✔️²     | ✔️³   |
-| HEIC   | ✔️      | ✔️  | ✔️    | ✔️²     | ✔️³   |
+| HEIC   | ✔️⁴     | ✔️  | ✔️    | ✔️²     | ✔️³   |
 
 ¹ Requires iOS 14 / macOS 11 or later.  
 ² Requires the WebP or HEIC codec from the Microsoft Store (built into
 Windows 11 for HEIC).  
 ³ Requires the matching GDK-Pixbuf loader: `webp-pixbuf-loader` for WebP,
-`libheif` + `heif-pixbuf-loader` for HEIC.
+`libheif` + `heif-pixbuf-loader` for HEIC.  
+⁴ Requires Android 9 or later.
 
 On Windows, any format with an installed WIC codec prints too (AVIF, JPEG XL,
 camera RAW…). Each page of a TIFF prints as a page, and page ranges apply.

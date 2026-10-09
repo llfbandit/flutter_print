@@ -15,6 +15,7 @@ import android.print.PrintAttributes;
 import android.print.PrintDocumentAdapter;
 import android.print.PrintDocumentInfo;
 import android.print.PrintJob;
+import android.print.PrintJobInfo;
 import android.print.PrintManager;
 
 import androidx.annotation.NonNull;
@@ -28,6 +29,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -41,6 +43,8 @@ public class FlutterPrintPlugin
   @Nullable
   private Activity activity;
 
+  private final Handler handler = new Handler(Looper.getMainLooper());
+
   // -------------------------------------------------------------------------
   // FlutterPlugin
   // -------------------------------------------------------------------------
@@ -53,6 +57,8 @@ public class FlutterPrintPlugin
   @Override
   public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
     Messages.FlutterPrintApi.setUp(binding.getBinaryMessenger(), null);
+    // Stop watching print jobs.
+    handler.removeCallbacksAndMessages(null);
   }
 
   // -------------------------------------------------------------------------
@@ -131,10 +137,13 @@ public class FlutterPrintPlugin
       throw new Messages.FlutterError("FILE_NOT_FOUND", "File not found: " + filePath, null);
     }
 
-    if (isImage(filePath)) {
+    if (isPdf(file)) {
+      watchJob(printPdf(file, options), result);
+    } else if (isImage(filePath)) {
       printImage(file, options, result);
     } else {
-      watchJob(printPdf(file, options), result);
+      throw new Messages.FlutterError(
+          "UNSUPPORTED_FILE", "File type not supported for printing", null);
     }
   }
 
@@ -222,8 +231,23 @@ public class FlutterPrintPlugin
     helper.printBitmap(file.getName(), Uri.fromFile(file), result::success);
   }
 
-  // Peeks the file header; treats anything BitmapFactory reports as image/* as
-  // an image. PDFs and unreadable files fall through to the PDF path.
+  // Looks for the %PDF- marker, which may follow up to 1 KB of junk.
+  private static boolean isPdf(@NonNull File file) {
+    byte[] buf = new byte[1024];
+    int len = 0;
+    try (InputStream in = new FileInputStream(file)) {
+      int n;
+      while (len < buf.length && (n = in.read(buf, len, buf.length - len)) > 0) {
+        len += n;
+      }
+    } catch (IOException e) {
+      return false;
+    }
+    return new String(buf, 0, len, StandardCharsets.ISO_8859_1).contains("%PDF-");
+  }
+
+  // Treats anything BitmapFactory can read as an image. It can't read TIFF,
+  // or HEIC before Android 9.
   private static boolean isImage(@NonNull String filePath) {
     BitmapFactory.Options opts = new BitmapFactory.Options();
     opts.inJustDecodeBounds = true;
@@ -231,20 +255,20 @@ public class FlutterPrintPlugin
     return opts.outMimeType != null && opts.outMimeType.startsWith("image/");
   }
 
-  // No completion callback exists for print jobs, so poll for a terminal state.
-  // Completion and cancellation both succeed (as on iOS/macOS); only failure errors.
-  private static void watchJob(@NonNull PrintJob job, @NonNull Messages.VoidResult result) {
-    Handler handler = new Handler(Looper.getMainLooper());
+  // No callback exists for print jobs, so poll until the user closes the dialog.
+  // A sent or cancelled job succeeds (as on iOS/macOS); only failure errors.
+  // Don't wait for the printer: an offline printer keeps the job queued.
+  private void watchJob(@NonNull PrintJob job, @NonNull Messages.VoidResult result) {
     handler.post(new Runnable() {
       @Override
       public void run() {
-        if (job.isCompleted() || job.isCancelled()) {
-          result.success();
-        } else if (job.isFailed()) {
+        if (job.isFailed()) {
           result.error(new Messages.FlutterError(
               "PRINT_FAILED", "Print job failed", null));
+        } else if (job.getInfo().getState() != PrintJobInfo.STATE_CREATED) {
+          result.success();
         } else {
-          // Still queued, started or blocked; keep waiting for a terminal state.
+          // The print dialog is still open.
           handler.postDelayed(this, 200);
         }
       }

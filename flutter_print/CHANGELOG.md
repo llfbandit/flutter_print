@@ -1,4 +1,6 @@
 ## 0.5.1
+* fix(android): Fail with `UNSUPPORTED_FILE` for files that are neither PDF nor a supported image, instead of printing them as PDF. TIFF, and HEIC before Android 9, are not supported.
+* fix(android): Return from `print` and `printPreview` once the job is sent, instead of waiting for the printer forever.
 * chore(linux): Require CUPS at build time and drop the `lp` fallback.
 * fix(linux): Find CUPS on distros whose `cups.pc` needs missing -dev packages (Ubuntu 26.04).
 * fix(linux): Fix the build with CUPS (missing `g_remove` declaration).
