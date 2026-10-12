@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.Context;
 import android.graphics.BitmapFactory;
 import android.graphics.pdf.PdfRenderer;
-import android.net.Uri;
 import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.Handler;
@@ -20,11 +19,9 @@ import android.print.PrintManager;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.print.PrintHelper;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -127,7 +124,7 @@ public class FlutterPrintPlugin
   // -------------------------------------------------------------------------
 
   private void handlePrint(@NonNull String filePath, @Nullable Messages.PrintOptions options,
-                           @NonNull Messages.VoidResult result) throws FileNotFoundException {
+                           @NonNull Messages.VoidResult result) {
     if (activity == null) {
       throw new Messages.FlutterError("NO_ACTIVITY", "Printing requires an active Activity", null);
     }
@@ -137,19 +134,27 @@ public class FlutterPrintPlugin
       throw new Messages.FlutterError("FILE_NOT_FOUND", "File not found: " + filePath, null);
     }
 
+    // A PDF is streamed as-is, an image is drawn on a PDF page.
+    PrintDocumentAdapter adapter;
     if (isPdf(file)) {
-      watchJob(printPdf(file, options), result);
+      adapter = new FilePrintDocumentAdapter(file.getPath());
     } else if (isImage(filePath)) {
-      printImage(file, options, result);
+      adapter = new ImagePrintDocumentAdapter(activity, filePath, file.getName());
     } else {
       throw new Messages.FlutterError(
           "UNSUPPORTED_FILE", "File type not supported for printing", null);
     }
+
+    PrintManager pm = (PrintManager) activity.getSystemService(Context.PRINT_SERVICE);
+    if (pm == null) {
+      throw new Messages.FlutterError(
+          "NO_PRINT_SERVICE", "Printing is not supported on this device", null);
+    }
+    watchJob(pm.print(file.getName(), adapter, printAttributes(options)), result);
   }
 
-  // Prints a PDF via the framework's PrintManager, streaming the file as-is.
   @NonNull
-  private PrintJob printPdf(@NonNull File file, @Nullable Messages.PrintOptions options) {
+  private static PrintAttributes printAttributes(@Nullable Messages.PrintOptions options) {
     PrintAttributes.Builder attrBuilder = new PrintAttributes.Builder();
 
     // When options are omitted, leave PrintAttributes empty so the system /
@@ -198,37 +203,7 @@ public class FlutterPrintPlugin
       }
     }
 
-    PrintManager pm = (PrintManager) activity.getSystemService(Context.PRINT_SERVICE);
-    if (pm == null) {
-      throw new Messages.FlutterError(
-          "NO_PRINT_SERVICE", "Printing is not supported on this device", null);
-    }
-    return pm.print(
-        file.getName(), new FilePrintDocumentAdapter(file.getPath()), attrBuilder.build());
-  }
-
-  // Prints an image via androidx PrintHelper, which loads/scales it off the main
-  // thread and shows the system print UI. onFinish fires on completion or
-  // cancellation (both success); PrintHelper exposes no failure signal.
-  private void printImage(@NonNull File file, @Nullable Messages.PrintOptions options,
-                          @NonNull Messages.VoidResult result) throws FileNotFoundException {
-    PrintHelper helper = new PrintHelper(activity);
-    helper.setScaleMode(PrintHelper.SCALE_MODE_FIT);
-
-    if (options != null) {
-      Boolean color = options.getColor();
-      if (color != null) {
-        helper.setColorMode(
-            color ? PrintHelper.COLOR_MODE_COLOR : PrintHelper.COLOR_MODE_MONOCHROME);
-      }
-      Boolean landscape = options.getLandscape();
-      if (landscape != null) {
-        helper.setOrientation(
-            landscape ? PrintHelper.ORIENTATION_LANDSCAPE : PrintHelper.ORIENTATION_PORTRAIT);
-      }
-    }
-
-    helper.printBitmap(file.getName(), Uri.fromFile(file), result::success);
+    return attrBuilder.build();
   }
 
   // Looks for the %PDF- marker, which may follow up to 1 KB of junk.

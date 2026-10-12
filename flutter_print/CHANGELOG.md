@@ -1,7 +1,10 @@
 ## 0.5.1
+* feat(android): Apply `pageSize`, `margins` and `duplexMode` to images, and print them at their real size and upright.
 * fix(android): Fail with `UNSUPPORTED_FILE` for files that are neither PDF nor a supported image, instead of printing them as PDF. TIFF, and HEIC before Android 9, are not supported.
 * fix(android): Return from `print` and `printPreview` once the job is sent, instead of waiting for the printer forever.
+* feat(linux): Open the GTK print dialog in `printPreview`, pre-filled with the options, instead of the default viewer.
 * chore(linux): Require CUPS at build time and drop the `lp` fallback.
+* fix(windows, linux): Print images at their real size. Shrink only the images larger than the page.
 * fix(linux): Find CUPS on distros whose `cups.pc` needs missing -dev packages (Ubuntu 26.04).
 * fix(linux): Fix the build with CUPS (missing `g_remove` declaration).
 * fix(linux): Send color and landscape to CUPS.
@@ -13,12 +16,10 @@
 * fix(linux): Print on a worker thread, so the app doesn't freeze while a job is sent.
 * fix(linux): Fail `printPreview` with `FILE_NOT_FOUND` for a missing file.
 * fix(linux): Fix `listPrinters` never answering, and leaking a thread on each call.
-* feat(linux): Open the GTK print dialog in `printPreview`, pre-filled with the options, instead of the default viewer.
 * feat(linux): Use the print portal in `printPreview` in Flatpak and Snap sandboxes.
 * fix(linux): Stop the warning logged when `print` gets no options.
 * fix(linux): Print images as PDF, so orientation works on every printer and GIF and BMP print.
 * fix(linux): Print text at 10 pt, like on Windows.
-* fix(windows, linux): Print images at their real size. Shrink only the images larger than the page.
 
 ## 0.5.0
 * feat: Add page range print option (Windows, macOS, Linux).

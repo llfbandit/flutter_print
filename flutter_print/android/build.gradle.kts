@@ -50,7 +50,6 @@ android {
 }
 
 dependencies {
-    implementation("androidx.print:print:1.1.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:5.0.0")
 }

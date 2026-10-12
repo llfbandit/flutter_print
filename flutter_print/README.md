@@ -2,222 +2,145 @@
 
 A Flutter plugin focusing on print, that's it.
 
-**PDF and image files** print on every platform, with the print options
-applied. Text documents are rendered natively on macOS and Windows. Other file
-types are handled differently on each platform, see [File types](#file-types).
-
-**Widgets** are rendered as an image in a single-page PDF.
+Print PDF, image and other files, or any widget, with print options, on
+Android, iOS, macOS, Windows, Linux and Web.
 
 <p align="center">
 <img src="https://raw.githubusercontent.com/llfbandit/flutter_print/main/img/win_preview.png" alt="Print preview on Windows" width="538">
 <img src="https://raw.githubusercontent.com/llfbandit/flutter_print/main/img/android_preview.png" alt="Print preview on Android" width="162">
 </p>
 
----
-
 ## Usage
-
-### Basic print
 
 ```dart
 import 'package:flutter_print/flutter_print.dart';
 
-// List available printers
-final List<PrinterInfo> printers = await FlutterPrint.listPrinters();
+final printers = await FlutterPrint.listPrinters();
 
-// Print with default settings
+// Print directly, or review the settings in the print dialog first.
 await FlutterPrint.print('/path/to/document.pdf');
-
-// Let the user review settings in the system print dialog first
 await FlutterPrint.printPreview('/path/to/document.pdf', context: context);
 
-// On the web `filePath` must be a URL accessible from the page's origin, or a
-// Blob URL. The browser's print dialog (which includes a preview) is always
-// shown.
-await FlutterPrint.print('https://example.com/document.pdf');
-```
-
-### Print with options
-
-```dart
 await FlutterPrint.print(
   '/path/to/document.pdf',
   options: PrintOptions(
-    // Target a specific printer (uses system default when omitted).
-    printerAddress: printers.first.address,
-
-    // Use a named page size preset.
-    // Or via PageSize(name: '', width: w, height: h)
-    pageSize: PaperSizes.a4,
-
-    // Margins in millimetres.
-    margins: PageMargins(top: 10, bottom: 10, left: 15, right: 15),
-
+    printerAddress: printers.first.address, // Default printer when omitted.
+    pageSize: PaperSizes.a4, // Or PageSize(name: '', width: w, height: h).
+    margins: PageMargins(top: 10, bottom: 10, left: 15, right: 15), // mm
     copies: 2,
     landscape: false,
     color: true,
     duplexMode: DuplexMode.longEdge,
-
-    // Pages 1–3 and 5.
     pageRanges: [PageRange(start: 1, end: 3), PageRange(start: 5, end: 5)],
   ),
 );
 ```
 
-Page ranges are 1-based and inclusive. They are sorted and merged before
-printing; an invalid range throws an `ArgumentError`, and a selection that
-matches no page fails with `INVALID_PAGE_RANGE`.
+On the web, the file path is a URL from the page's origin or a Blob URL, and
+the browser's print dialog is always shown.
 
-### Widget print
+### Widgets
 
-Render any Flutter widget off-screen and print it directly — no file needed.
-`printWidget` rasterises the widget into a single-page PDF and sends it to the
-printer, and `printWidgetPreview` opens it in the print dialog instead.
-`previewWidget` returns PNG bytes you can display with `Image.memory` before
-printing.
+Widgets are rendered off-screen as an image in a single-page PDF.
 
 ```dart
-// Print a widget
+// Print, or use printWidgetPreview to open the print dialog.
 await FlutterPrint.printWidget(
   (ctx) => Theme(data: Theme.of(ctx), child: MyReceiptWidget()),
   context: context,
   options: PrintOptions(pageSize: PaperSizes.a4),
 );
 
-// Preview a widget in-app before printing
-final png = await FlutterPrint.previewWidget(
-  (ctx) => Theme(data: Theme.of(ctx), child: MyReceiptWidget()),
-  context: context,
-  options: PrintOptions(pageSize: PaperSizes.a4),
-);
-Image.memory(png);
+// Get PNG bytes to show before printing.
+final png = await FlutterPrint.previewWidget(...);
 ```
 
----
+## Platform support
 
-## Feature support by platform
-
-| Feature        | Android | iOS | macOS | Windows | Linux | Web |
-|----------------|---------|-----|-------|---------|-------|-----|
-| Direct print   |         | ✔️¹ | ✔️    | ✔️      | ✔️    |     |
-| Print preview  | ✔️      | ✔️  | ✔️    | ✔️²     | ✔️³   | ✔️  |
-| List printers  |         |     | ✔️    | ✔️      | ✔️    |     |
-
-¹ With a `printerAddress` from `FlutterPrint.ios?.pickPrinter()` (e.g.
-`ipp://printer.local./ipp/print`). Without it, the system print dialog is shown.  
-² A Flutter print dialog with a built-in preview.  
-³ The GTK print dialog, pre-filled with the options. Its Preview button opens
-the file in the default viewer.
-
-## Option support by platform
-
-Options a platform doesn't support are silently ignored.
-
-| Option           | Android | iOS | macOS | Windows | Linux | Web |
+|                  | Android | iOS | macOS | Windows | Linux | Web |
 |------------------|---------|-----|-------|---------|-------|-----|
+| `print`          |         | ✔️¹ | ✔️    | ✔️      | ✔️    |     |
+| `printPreview`   | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    | ✔️  |
+| `listPrinters`   |         |     | ✔️    | ✔️      | ✔️    |     |
 | `printerAddress` |         | ✔️¹ | ✔️    | ✔️      | ✔️    |     |
-| `pageSize`       | ✔️⁴     |     | ✔️    | ✔️²     | ✔️    |     |
-| `margins`        | ✔️⁴     |     | ✔️    |         |       |     |
+| `pageSize`       | ✔️      |     | ✔️    | ✔️²     | ✔️    |     |
+| `margins`        | ✔️      |     | ✔️    |         |       |     |
 | `copies`         |         |     | ✔️    | ✔️²     | ✔️    |     |
 | `landscape`      | ✔️      | ✔️  | ✔️    | ✔️²     | ✔️    |     |
-| `color`          | ✔️      | ✔️  | ✔️³   | ✔️²     | ✔️    |     |
-| `duplexMode`     | ✔️⁴     | ✔️  | ✔️    | ✔️²     | ✔️    |     |
+| `color`          | ✔️      | ✔️  | ✔️    | ✔️²     | ✔️    |     |
+| `duplexMode`     | ✔️      | ✔️  | ✔️    | ✔️²     | ✔️    |     |
 | `pageRanges`     |         |     | ✔️    | ✔️²     | ✔️    |     |
 
-¹ `print` only, with an address from `FlutterPrint.ios?.pickPrinter()`. `printPreview` ignores it.  
-² For PDF, image, EMF/WMF and text files only.  
-³ The print panel shows the requested `color` when the printer driver has
-colour presets (AirPrint and most drivers).  
-⁴ For PDF files only.
+Where `print` is unsupported, it opens the print dialog. Unsupported options
+are ignored.
 
-On macOS, the options are applied to the print panel too, so the user starts
-from the requested settings.
+¹ With an address from `FlutterPrint.ios?.pickPrinter()`. `printPreview`
+ignores it.  
+² Supported file types only, see [File types](#file-types). Files printed by
+their default app ignore it.
 
-## File types
+### File types
 
 | Platform | PDF & images | Text documents | Other files |
 |----------|--------------|----------------|-------------|
-| Android  | Native       | `UNSUPPORTED_FILE` | `UNSUPPORTED_FILE` |
-| iOS      | Native       | `UNSUPPORTED_FILE` | `UNSUPPORTED_FILE` |
-| macOS    | Native       | Native¹        | `print` fails with `UNSUPPORTED_FILE`; `printPreview` opens the default app |
-| Windows  | Native²      | Native³        | Printed by the associated application, with its own settings⁴ |
-| Linux    | CUPS         | CUPS           | CUPS |
-| Web      | Browser      | Browser        | Browser |
+| Android  | ✔️           |                |             |
+| iOS      | ✔️           |                |             |
+| macOS    | ✔️           | ✔️¹            | `printPreview` opens the default app |
+| Windows  | ✔️           | ✔️²            | Printed by the default app, with its own settings |
+| Linux    | ✔️           | ✔️             | ✔️ (CUPS) |
+| Web      | ✔️           | ✔️             | ✔️ (browser) |
 
-¹ Plain text, RTF, HTML, Word and OpenDocument text (macOS 11+).  
-² Also EMF and WMF, printed as vectors.  
-³ Any text file, detected by its content (`.txt`, `.csv`, `.json`, `.md`,
-`.log`, source code…), printed as plain text.  
-⁴ Including HTML, SVG and RTF.
+Unsupported files fail with `UNSUPPORTED_FILE`.
 
-## Image support by platform
+¹ Plain text, RTF, HTML, Word and OpenDocument (macOS 11+).  
+² Any text file, detected by its content, printed as plain text. EMF and WMF
+print as vectors.
+
+### Images
+
+JPEG, PNG, BMP and GIF print everywhere. TIFF prints everywhere but Android.
 
 | Format | Android | iOS | macOS | Windows | Linux |
 |--------|---------|-----|-------|---------|-------|
-| JPEG   | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    |
-| PNG    | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    |
-| BMP    | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    |
-| GIF    | ✔️      | ✔️  | ✔️    | ✔️      | ✔️    |
-| TIFF   |         | ✔️  | ✔️    | ✔️      | ✔️    |
-| WebP   | ✔️      | ✔️¹ | ✔️¹   | ✔️²     | ✔️³   |
-| HEIC   | ✔️⁴     | ✔️  | ✔️    | ✔️²     | ✔️³   |
+| WebP   | ✔️      | 14+ | 11+   | ✔️¹     | ✔️²   |
+| HEIC   | 9+      | ✔️  | ✔️    | ✔️¹     | ✔️²   |
 
-¹ Requires iOS 14 / macOS 11 or later.  
-² Requires the WebP or HEIC codec from the Microsoft Store (built into
-Windows 11 for HEIC).  
-³ Requires the matching GDK-Pixbuf loader: `webp-pixbuf-loader` for WebP,
-`libheif` + `heif-pixbuf-loader` for HEIC.  
-⁴ Requires Android 9 or later.
-
-On Windows, any format with an installed WIC codec prints too (AVIF, JPEG XL,
-camera RAW…). Each page of a TIFF prints as a page, and page ranges apply.
-Photos print upright from their EXIF orientation.
-
----
+¹ With the codec from the Microsoft Store (HEIC is built into Windows 11). Any
+other format with a WIC codec prints too (AVIF, JPEG XL, RAW…).  
+² With `webp-pixbuf-loader` for WebP, `libheif` and `heif-pixbuf-loader` for
+HEIC.
 
 ## Setup
 
 ### macOS
 
 Add the print entitlement to `macos/Runner/Release.entitlements` and
-`macos/Runner/DebugProfile.entitlements`:
+`macos/Runner/DebugProfile.entitlements`. No other entitlement is needed.
 
 ```xml
 <key>com.apple.security.print</key>
 <true/>
 ```
 
-The plugin works in sandboxed apps and needs no other entitlement.
-
 ### Windows
 
-- x64 only for now.
-- The first build downloads [PDFium binaries](https://github.com/bblanchon/pdfium-binaries) and bundles
-`pdfium.dll` with your app.
-- Ship PDFium's licence notices with your app: `LICENSE` and `licenses/` in
-`build/windows/x64/_deps/pdfium-src/`.
+x64 only. The first build downloads
+[PDFium](https://github.com/bblanchon/pdfium-binaries) and bundles
+`pdfium.dll`. Ship its licence notices (`LICENSE` and `licenses/` in
+`build/windows/x64/_deps/pdfium-src/`) with your app.
 
 ### Linux
 
-The plugin requires the **CUPS** development libraries. Install them before
-building the application:
+Install the CUPS development libraries to build, and run the CUPS service to
+print:
 
 ```sh
-# Debian / Ubuntu
-sudo apt install libcups2-dev
-
-# Fedora / RHEL / CentOS
-sudo dnf install cups-devel
-
-# Arch Linux
-sudo pacman -S cups
+sudo apt install libcups2-dev   # Debian / Ubuntu
+sudo dnf install cups-devel     # Fedora / RHEL
+sudo pacman -S cups             # Arch
 ```
 
-Without them the build fails. At runtime, the CUPS service must be running to
-list printers and print.
-
-In a Flatpak or Snap sandbox, `printPreview` shows the desktop print dialog
-through the print portal (`xdg-desktop-portal`). Set `GTK_USE_PORTAL=1` to use
-the portal outside a sandbox too. With the GNOME portal, page ranges and
-orientation may be ignored. `print` and `listPrinters` still need CUPS: give
-the app access to it (`--socket=cups` for Flatpak, the `cups` plug for Snap).
+In a Flatpak or Snap sandbox, `printPreview` uses the desktop print dialog
+(`xdg-desktop-portal`), where page ranges and orientation may be ignored. Set
+`GTK_USE_PORTAL=1` to use it outside a sandbox. `print` and `listPrinters` still
+need CUPS: `--socket=cups` for Flatpak, the `cups` plug for Snap.
