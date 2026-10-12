@@ -11,7 +11,7 @@
 * fix(linux): Use the user's default printer and saved printer options. Fail with `PRINTER_ERROR` for an unknown printer.
 * fix(linux): Select the paper by its size, so B4, B5, JIS, C5 and DL print on the right paper.
 * fix(linux): Convert WebP and HEIC images in a temp file with a random name.
-* fix(linux): Report colour and duplex support in `listPrinters`.
+* fix(linux): Report colour, duplex, page size and max copies support in `listPrinters`.
 * fix(linux): Fail with `UNSUPPORTED_FILE` when a WebP or HEIC image can't be converted, instead of sending it to CUPS.
 * fix(linux): Print on a worker thread, so the app doesn't freeze while a job is sent.
 * fix(linux): Fail `printPreview` with `FILE_NOT_FOUND` for a missing file.
