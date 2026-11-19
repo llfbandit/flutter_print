@@ -23,8 +23,7 @@ extension FlutterPrintPlugin {
       if PMServerCreatePrinterList(nil, &listRef) == noErr,
          let list = listRef?.takeRetainedValue() {
         forEachPM(in: list, as: PMPrinter.self) { printer in
-          guard let name = PMPrinterGetName(printer)?.takeUnretainedValue() as String?
-          else { return }
+          guard let name = PMPrinterGetName(printer) as? String else { return }
           var state: PMPrinterState = 0
           PMPrinterGetState(printer, &state)
           pmInfo[name] = (
